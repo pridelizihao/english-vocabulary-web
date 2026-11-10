@@ -2,7 +2,19 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { Rating } from '../api'
-import { RATINGS, RATING_META, buildClozeAnswer, checkCloze, clozeSlots, isClozeComplete, rateHint, type StudyItem } from '../lib/study'
+import {
+  RATINGS,
+  RATING_META,
+  buildClozeAnswer,
+  checkCloze,
+  clozeSlots,
+  isClozeComplete,
+  maskWordInExample,
+  primaryMeaning,
+  rateHint,
+  splitExample,
+  type StudyItem,
+} from '../lib/study'
 
 const props = defineProps<{
   item: StudyItem
@@ -26,12 +38,18 @@ const revealed = ref(false)
 const answer = ref<string[]>([])
 const result = ref<'correct' | 'wrong' | null>(null)
 const shaking = ref(false)
+const hintVisible = ref(false)
+const fullMeaningVisible = ref(false)
 const clozeBox = ref<HTMLElement | null>(null)
 
 const word = computed(() => props.item.word)
 const slots = computed(() => clozeSlots(word.value.spelling))
 const noBlanks = computed(() => slots.value.every((slot) => slot.visible))
 const complete = computed(() => isClozeComplete(word.value.spelling, answer.value))
+const exampleParts = computed(() => splitExample(word.value.example, word.value.spelling))
+const maskedExample = computed(() => maskWordInExample(word.value.example, word.value.spelling))
+const shortMeaning = computed(() => primaryMeaning(word.value.meaning))
+const hasMoreMeaning = computed(() => shortMeaning.value !== word.value.meaning.trim())
 const progress = computed(() => (props.total ? Math.round((props.index / props.total) * 100) : 0))
 const speechAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window
 const canSpeak = speechAvailable || Boolean(word.value.audio_url || word.value.pronunciation_url)
@@ -40,6 +58,8 @@ function reset() {
   revealed.value = false
   result.value = null
   shaking.value = false
+  hintVisible.value = false
+  fullMeaningVisible.value = false
   answer.value = buildClozeAnswer(word.value.spelling)
   focusFirstEmpty()
 }
@@ -248,8 +268,15 @@ onBeforeUnmount(() => {
       </button>
 
       <div v-else class="answer">
-        <strong>{{ word.meaning }}</strong>
-        <p v-if="word.example" class="example">{{ word.example }}</p>
+        <strong>{{ shortMeaning }}</strong>
+        <button v-if="hasMoreMeaning" class="link-button meaning-toggle" @click="fullMeaningVisible = !fullMeaningVisible">
+          {{ fullMeaningVisible ? '收起完整释义' : '完整释义' }}
+        </button>
+        <p v-if="fullMeaningVisible" class="meaning-full">{{ word.meaning }}</p>
+        <p v-if="word.example" class="example">
+          <span v-for="(part, partIndex) in exampleParts" :key="partIndex" :class="{ hit: part.hit }">{{ part.text }}</span>
+        </p>
+        <p v-if="word.example_translation" class="example-translation">{{ word.example_translation }}</p>
         <div class="ratings">
           <button
             v-for="(rating, position) in RATINGS"
@@ -269,7 +296,7 @@ onBeforeUnmount(() => {
 
     <section v-else class="card cloze-card">
       <p class="cloze-label">根据中文释义补全单词</p>
-      <p class="meaning-hint">{{ word.meaning }}</p>
+      <p class="meaning-hint">{{ shortMeaning }}</p>
       <div ref="clozeBox" class="cloze-word" :class="{ shake: shaking }">
         <template v-for="slot in slots" :key="slot.index">
           <span v-if="slot.visible" class="cloze-fixed">{{ slot.char }}</span>
@@ -287,6 +314,16 @@ onBeforeUnmount(() => {
         </template>
       </div>
       <p v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</p>
+
+      <div v-if="word.example" class="cloze-hint">
+        <button class="link-button" @click="hintVisible = !hintVisible">
+          {{ hintVisible ? '收起例句提示' : '例句提示' }}
+        </button>
+        <template v-if="hintVisible">
+          <p class="example">{{ maskedExample }}</p>
+          <p v-if="word.example_translation" class="example-translation">{{ word.example_translation }}</p>
+        </template>
+      </div>
 
       <p v-if="noBlanks" class="muted">这个词太短，没有需要填的空，直接继续即可。</p>
 

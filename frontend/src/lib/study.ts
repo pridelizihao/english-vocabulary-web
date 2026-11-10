@@ -75,6 +75,89 @@ export function requeueAgain(queue: StudyItem[], item: StudyItem, maxRepeats = 1
   return [...queue, { ...item, repeats: item.repeats + 1 }]
 }
 
+export type ExamplePart = { text: string; hit: boolean }
+
+const WORD_SUFFIXES = ['', 's', 'es', 'ed', 'd', 'ing', 'ly', "'s", '’s']
+const EXAMPLE_TOKEN = /[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F'’-]*/g
+
+function isWordForm(token: string, base: string) {
+  if (token === base) return true
+  for (const suffix of WORD_SUFFIXES.slice(1)) {
+    if (token === base + suffix) return true
+  }
+  if (base.endsWith('y')) {
+    const stem = base.slice(0, -1)
+    if (token === `${stem}ies` || token === `${stem}ied` || token === `${stem}ier` || token === `${stem}iest`) return true
+  }
+  if (base.endsWith('e') && token === `${base.slice(0, -1)}ing`) return true
+  if (base.endsWith('e') && token === `${base.slice(0, -1)}ed`) return true
+  const last = base.slice(-1)
+  if (base.length >= 3 && !'aeiou'.includes(last) && !'wxy'.includes(last)) {
+    if (token === `${base}${last}ed` || token === `${base}${last}ing`) return true
+  }
+  return false
+}
+
+/** Split an example sentence so the target word (and its inflections) can be highlighted. */
+export function splitExample(example: string, spelling: string): ExamplePart[] {
+  if (!example) return []
+  const base = spelling.trim().toLowerCase()
+  if (!base) return [{ text: example, hit: false }]
+  if (base.includes(' ')) return splitPhrase(example, base)
+  const parts: ExamplePart[] = []
+  let last = 0
+  for (const match of example.matchAll(EXAMPLE_TOKEN)) {
+    const token = match[0]
+    const index = match.index ?? 0
+    if (!isWordForm(token.toLowerCase(), base)) continue
+    if (index > last) parts.push({ text: example.slice(last, index), hit: false })
+    parts.push({ text: token, hit: true })
+    last = index + token.length
+  }
+  if (!parts.length) return [{ text: example, hit: false }]
+  if (last < example.length) parts.push({ text: example.slice(last), hit: false })
+  return parts
+}
+
+/** Multi-word entries ("according to") are matched as a plain phrase. */
+function splitPhrase(example: string, phrase: string): ExamplePart[] {
+  const parts: ExamplePart[] = []
+  let cursor = 0
+  const haystack = example.toLowerCase()
+  let index = haystack.indexOf(phrase, cursor)
+  if (index === -1) return [{ text: example, hit: false }]
+  while (index !== -1) {
+    if (index > cursor) parts.push({ text: example.slice(cursor, index), hit: false })
+    parts.push({ text: example.slice(index, index + phrase.length), hit: true })
+    cursor = index + phrase.length
+    index = haystack.indexOf(phrase, cursor)
+  }
+  if (cursor < example.length) parts.push({ text: example.slice(cursor), hit: false })
+  return parts
+}
+
+/** Hide the target word in an example so it can be used as a cloze hint. */
+export function maskWordInExample(example: string, spelling: string) {
+  return splitExample(example, spelling)
+    .map((part) => (part.hit ? '____' : part.text))
+    .join('')
+}
+
+/** A compact, readable primary meaning for cards and cloze hints. */
+export function primaryMeaning(meaning: string, maxLength = 48) {
+  const text = meaning.replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+  const senses = text.split(/[;；]/).map((part) => part.trim()).filter(Boolean)
+  let first = (senses[0] ?? text).replace(/\[[^\]]{1,8}\]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!first) first = (senses[0] ?? text).trim()
+  const parts = first.split(/[,，、]/).map((part) => part.trim()).filter(Boolean)
+  const unique = parts.filter((part, index) => parts.indexOf(part) === index)
+  if (unique.length > 2) first = unique.slice(0, 2).join('，')
+  else if (unique.length) first = unique.join('，')
+  if (first.length > maxLength) first = `${first.slice(0, maxLength)}…`
+  return first || text.slice(0, maxLength)
+}
+
 export type DoneReason = 'session-complete' | 'daily-limit' | 'all-learned' | 'no-words'
 
 /** Why the study view has nothing left to show. */

@@ -762,6 +762,47 @@ label {
   font-style: italic;
 }
 
+.example .hit {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.example-translation {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.meaning-toggle {
+  display: block;
+  margin: 2px auto 0;
+  font-size: 13px;
+}
+
+.meaning-full {
+  max-width: 58ch;
+  margin: 8px auto 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.cloze-hint {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  margin-top: 10px;
+}
+
+.cloze-hint .example {
+  margin: 0;
+  max-width: 46ch;
+}
+
 .ratings {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

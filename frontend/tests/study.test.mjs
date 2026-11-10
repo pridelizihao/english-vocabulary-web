@@ -9,9 +9,12 @@ import {
   doneReason,
   formatDue,
   isClozeComplete,
+  maskWordInExample,
+  primaryMeaning,
   progressPercent,
   requeueAgain,
   revealCount,
+  splitExample,
 } from '../src/lib/study.ts'
 
 const spellingOf = (slots) => slots.map((slot) => (slot.visible ? slot.char : '_')).join('')
@@ -105,4 +108,37 @@ test('formatDue describes the next review in human terms', () => {
   assert.equal(formatDue(new Date('2026-11-11T12:00:00+08:00').toISOString(), now), '明天')
   assert.equal(formatDue(new Date('2026-11-13T12:00:00+08:00').toISOString(), now), '3 天后')
   assert.equal(formatDue(new Date('2027-01-10T12:00:00+08:00').toISOString(), now), '2 个月后')
+})
+
+test('splitExample marks the target word and its inflections', () => {
+  const parts = splitExample('He abandoned the plan in April.', 'abandon')
+  const hits = parts.filter((part) => part.hit)
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0].text, 'abandoned')
+  assert.equal(parts.map((part) => part.text).join(''), 'He abandoned the plan in April.')
+})
+
+test('splitExample keeps text intact when the word is absent', () => {
+  const parts = splitExample('Nothing to highlight here.', 'abandon')
+  assert.deepEqual(parts, [{ text: 'Nothing to highlight here.', hit: false }])
+})
+
+test('splitExample matches plural, y-inflections and doubled consonants', () => {
+  assert.equal(splitExample('She studies hard.', 'study').filter((part) => part.hit)[0].text, 'studies')
+  assert.equal(splitExample('Two boxes arrived.', 'box').filter((part) => part.hit)[0].text, 'boxes')
+  assert.equal(splitExample('It is running late.', 'run').filter((part) => part.hit)[0].text, 'running')
+})
+
+test('maskWordInExample hides the answer but keeps the context', () => {
+  assert.equal(maskWordInExample('He abandoned the plan.', 'abandon'), 'He ____ the plan.')
+  assert.equal(maskWordInExample('Abandon it now.', 'abandon'), '____ it now.')
+  assert.equal(maskWordInExample('No match here.', 'abandon'), 'No match here.')
+})
+
+test('primaryMeaning keeps the leading senses and drops domain tags', () => {
+  assert.equal(primaryMeaning('放弃, 抛弃, 遗弃, 使屈从; 放任, 无拘束'), '放弃，抛弃')
+  assert.equal(primaryMeaning('爱滋病(获得性免疫缺陷综合征); 高级综合数据系统'), '爱滋病(获得性免疫缺陷综合征)')
+  assert.equal(primaryMeaning('[计] 计算机; 电脑'), '计算机')
+  assert.equal(primaryMeaning(''), '')
+  assert.ok(primaryMeaning('a very long single sense without any punctuation '.repeat(2)).endsWith('…'))
 })

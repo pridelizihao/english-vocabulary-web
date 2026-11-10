@@ -29,6 +29,7 @@ export type Word = {
   part_of_speech: string
   meaning: string
   example: string
+  example_translation: string
   audio_url: string
   preview: RatingPreview
 }
