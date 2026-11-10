@@ -37,7 +37,8 @@ data/
   examples.json                例句 + 中文翻译（enrich_examples 的数据源）
   samples/words.csv            CSV 导入模板
   scripts/build_wordlists.py   从 sources + examples 生成 imports
-docs/                          设计说明与审查报告
+deploy/                        systemd unit + nginx 站点配置（原生部署用）
+docs/                          设计说明、审查报告、部署说明（deploy.md）
 ```
 
 ## 3. 环境
@@ -139,7 +140,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 例句与中文翻译来自 `data/examples.json`（项目生成，非第三方词典语料）；要换成授权语料，按同格式替换后跑 `enrich_examples --force` 与 `build_wordlists.py`。
 - 释义仍是 ECDICT 原始多义项文本，卡片/填空只显示 `primaryMeaning()` 截出的主释义，完整内容可展开。
 - 没有「撤销上一题」和错词本；`wrong_count` 在攒但没有入口。
-- Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**。
+- Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**；生产走的是原生部署（nginx + gunicorn + systemd），步骤见 `docs/deploy.md`，已在 Ubuntu 24.04 上跑通。
 - 单词发音顺序是「词典自带 `audio_url` → 系统英文语音（Web Speech API）→ 有道在线发音」，卡片和填空都有「🔊 朗读」按钮；在线发音会把单词发到 `dict.youdao.com`，没有英文语音包时靠它兜底。
 - 词表来源见 `data/sources/README.md`，商用前需确认上游授权。
 - SQLite 单文件；要上多实例/高并发前先换 PostgreSQL，并把 `db.sqlite3` 从仓库外备份策略里接进来。

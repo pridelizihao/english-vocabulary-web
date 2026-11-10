@@ -89,6 +89,10 @@ python data/scripts/build_wordlists.py        # 把例句写回可导入的 CSV
 
 ## 发布
 
+原生部署（nginx + gunicorn + systemd，已在 Ubuntu 24.04 实测）见 [`docs/deploy.md`](docs/deploy.md)，配置模板在 `deploy/`。
+
+也可以用 Docker：
+
 ```bash
 cp .env.example .env    # 填写 DJANGO_SECRET_KEY 等
 docker compose up --build
