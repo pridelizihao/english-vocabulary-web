@@ -25,7 +25,7 @@ backend/                       Django 项目
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
   src/lib/study.ts             纯函数：填空遮罩、队列、格式化（node 可直接测）
-  src/lib/profile.ts           学习面板的纯函数（热力图分档、周网格）
+  src/lib/profile.ts           学习面板的纯函数（热力图分档、按周分列）
   src/lib/router.ts            hash 路由：/ · /auth · /profile · /study/:id · /done/:id
   src/composables/useSession.ts 全局学习会话状态与动作
   src/views/*.vue              Auth / Dictionaries / Study / Done / Profile
@@ -124,6 +124,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 快捷键是产品的一部分：`空格` 看答案、`1`–`4` 评分、`回车` 确认。改交互时别弄丢。
 - 填空模式的遮罩与判分必须共用 `lib/study.ts` 的 `clozeSlots / buildClozeAnswer / checkCloze`，不要在组件和模板里各算一套（历史 bug 就是这么来的）。
 - 长单词必须可换行：`h3` 用 `clamp()`，`overflow-wrap: anywhere`，填空行 `flex-wrap: wrap`。
+- 热力图的格子边长由 `ProfileView` 的 `measureHeatmap()` 按容器宽度算（`--heat-cell` / `--heat-gap`），显示周数也随宽度在 13–53 周之间自适应；不要写死像素或加横向滚动容器，格子必须保持正方形。
 - 文案全中文；错误优先用后端 `detail`。
 
 ## 8. 测试与提交
@@ -139,7 +140,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 释义仍是 ECDICT 原始多义项文本，卡片/填空只显示 `primaryMeaning()` 截出的主释义，完整内容可展开。
 - 没有「撤销上一题」和错词本；`wrong_count` 在攒但没有入口。
 - Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**。
-- 单词发音优先用 `audio_url`，缺失时用浏览器 Web Speech API（需要一次真实点击；没有英文语音时会显示提示）。
+- 单词发音优先用 `audio_url`，缺失时用浏览器 Web Speech API；卡片和填空都有「🔊 朗读」按钮，需要一次真实点击，没有英文语音时会显示提示。
 - 词表来源见 `data/sources/README.md`，商用前需确认上游授权。
 - SQLite 单文件；要上多实例/高并发前先换 PostgreSQL，并把 `db.sqlite3` 从仓库外备份策略里接进来。
 

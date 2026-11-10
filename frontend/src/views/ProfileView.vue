@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { ProfileDay, ProfileDictionary } from '../api'
 import { useSession } from '../composables/useSession'
@@ -9,7 +9,17 @@ import { navigate } from '../lib/router'
 const { profile, loading, user, startReview } = useSession()
 
 const days = computed(() => profile.value?.daily ?? [])
-const heatmap = computed(() => buildHeatmap(days.value))
+const heatWrap = ref<HTMLElement | null>(null)
+const heatWidth = ref(0)
+const heatCell = ref(12)
+const heatGap = ref(3)
+// 一周一列；容器越窄显示的周数越少，格子才能保持看得清的尺寸。
+const heatWeeks = computed(() => {
+  if (!heatWidth.value) return 53
+  return Math.min(53, Math.max(13, Math.round((heatWidth.value - 22) / 14.5)))
+})
+const visibleDays = computed(() => days.value.slice(-(heatWeeks.value * 7)))
+const heatmap = computed(() => buildHeatmap(visibleDays.value))
 const week = computed(() => recentDays(days.value, 7))
 const weekTotals = computed(() =>
   week.value.reduce(
@@ -24,6 +34,41 @@ const weekTotals = computed(() =>
 )
 
 const tooltip = ref<{ x: number; y: number; day: ProfileDay } | null>(null)
+
+let observer: ResizeObserver | null = null
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'undefined') {
+    observer = new ResizeObserver(() => measureHeatmap())
+  }
+  nextTick(measureHeatmap)
+})
+onBeforeUnmount(() => observer?.disconnect())
+
+watch(heatWrap, (element) => {
+  if (element && observer) observer.observe(element)
+  nextTick(measureHeatmap)
+})
+watch(heatmap, () => nextTick(measureHeatmap))
+
+// 格子边长按容器宽度算：正好铺满一行、保持正方形，不出现横向滚动。
+function measureHeatmap() {
+  const element = heatWrap.value
+  if (!element) return
+  const width = element.clientWidth
+  if (width && width !== heatWidth.value) heatWidth.value = width
+  const columns = heatmap.value.columns.length
+  if (!columns) return
+  const available = width - 22
+  let gap = 3
+  let cell = (available - (columns - 1) * gap) / columns
+  if (cell < 8) {
+    gap = 2
+    cell = (available - (columns - 1) * gap) / columns
+  }
+  heatCell.value = Math.max(3, Math.round(cell * 100) / 100)
+  heatGap.value = gap
+}
 
 function showTooltip(event: MouseEvent, day: ProfileDay | null) {
   if (!day) {
@@ -48,7 +93,7 @@ function review(item: ProfileDictionary) {
       <div>
         <p class="eyebrow">学习数据</p>
         <h2>{{ user?.username || '我' }} 的学习习惯</h2>
-        <p class="lede">最近一年的答题热力图，按天记录新词、复习和练习；连续天数只算有答题的日子。</p>
+        <p class="lede">答题热力图，按天记录新词、复习和练习（最多近一年，屏幕窄时自动缩短）；连续天数只算有答题的日子。</p>
       </div>
       <button class="link-button" @click="navigate('/')">← 返回词典</button>
     </div>
@@ -94,13 +139,16 @@ function review(item: ProfileDictionary) {
           </span>
         </header>
 
-        <div class="heatmap-scroll">
-          <div class="heatmap-wrap" :style="{ width: `${Math.max(heatmap.columns.length * 15, 120)}px` }">
+        <div
+          ref="heatWrap"
+          class="heatmap-wrap"
+          :style="{ '--heat-cell': `${heatCell}px`, '--heat-gap': `${heatGap}px` }"
+        >
             <div class="heatmap-months">
               <span
                 v-for="month in heatmap.months"
                 :key="month.index"
-                :style="{ left: `${month.index * 15}px` }"
+                :style="{ left: `${(month.index / Math.max(heatmap.columns.length, 1)) * 100}%` }"
               >{{ month.label }}</span>
             </div>
             <div class="heatmap-body">
@@ -109,17 +157,14 @@ function review(item: ProfileDictionary) {
               </div>
               <div
                 class="heatmap-grid"
-                :style="{
-                  gridTemplateColumns: `repeat(${heatmap.columns.length}, 12px)`,
-                  gridTemplateRows: 'repeat(7, 12px)',
-                }"
+                :style="{ gridTemplateColumns: `repeat(${heatmap.columns.length}, minmax(0, 1fr))` }"
               >
                 <template v-for="(column, columnIndex) in heatmap.columns" :key="columnIndex">
                   <div
                     v-for="(day, dayIndex) in column"
                     :key="`${columnIndex}-${dayIndex}`"
                     class="heat-cell"
-                    :class="day ? `level-${heatLevel(day.answers)}` : 'empty'"
+                    :class="day ? `level-${heatLevel(day.answers)}` : 'is-empty'"
                     :title="day ? `${day.date}：${day.answers} 次` : ''"
                     @mouseenter="showTooltip($event, day)"
                     @mouseleave="hideTooltip"
@@ -127,7 +172,6 @@ function review(item: ProfileDictionary) {
                 </template>
               </div>
             </div>
-          </div>
         </div>
 
         <p class="muted profile-caption">

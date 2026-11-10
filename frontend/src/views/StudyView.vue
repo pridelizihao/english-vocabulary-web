@@ -325,7 +325,7 @@ onBeforeUnmount(() => {
     <section v-if="mode === 'card'" class="card">
       <div class="word-row">
         <h3 :class="{ long: word.spelling.length > 10 }">{{ word.spelling }}</h3>
-        <button v-if="canSpeak" class="icon-button" title="朗读单词" aria-label="朗读单词" @click="speak">🔊</button>
+        <button v-if="canSpeak" class="speak-button" title="朗读单词" aria-label="朗读单词" @click="speak">🔊 朗读</button>
       </div>
       <p class="phonetic">
         {{ word.phonetic || '暂无音标' }}
@@ -384,6 +384,8 @@ onBeforeUnmount(() => {
         </template>
       </div>
       <p v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</p>
+      <button v-if="canSpeak" class="speak-button" @click="speak">🔊 朗读</button>
+      <p v-if="speechMessage" class="speech-hint">{{ speechMessage }}</p>
 
       <div v-if="word.example" class="cloze-hint">
         <button class="link-button" @click="hintVisible = !hintVisible">
