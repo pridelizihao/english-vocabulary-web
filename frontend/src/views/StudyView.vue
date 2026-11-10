@@ -39,6 +39,8 @@ const answer = ref<string[]>([])
 const result = ref<'correct' | 'wrong' | null>(null)
 const shaking = ref(false)
 const attempts = ref(0)
+const speechMessage = ref('')
+const availableVoices = ref<SpeechSynthesisVoice[]>([])
 const hintVisible = ref(false)
 const fullMeaningVisible = ref(false)
 const clozeBox = ref<HTMLElement | null>(null)
@@ -61,6 +63,7 @@ function reset() {
   result.value = null
   shaking.value = false
   attempts.value = 0
+  speechMessage.value = ''
   hintVisible.value = false
   fullMeaningVisible.value = false
   answer.value = buildClozeAnswer(word.value.spelling)
@@ -180,21 +183,49 @@ function emitRate(rating: Rating) {
 }
 
 function speak() {
+  speechMessage.value = ''
   const source = word.value.audio_url || word.value.pronunciation_url
   if (source) {
-    new Audio(source).play().catch(() => synthesise())
+    const audio = new Audio(source)
+    audio.play().catch(() => synthesise())
     return
   }
   synthesise()
 }
 
 function synthesise() {
-  if (!speechAvailable) return
+  if (!speechAvailable) {
+    speechMessage.value = '当前浏览器不支持语音朗读'
+    return
+  }
+  const synth = window.speechSynthesis
+  if (!synth) return
+  if (synth.speaking || synth.pending) synth.cancel()
+  synth.resume()
+
   const utterance = new SpeechSynthesisUtterance(word.value.spelling)
   utterance.lang = 'en-US'
   utterance.rate = 0.9
-  window.speechSynthesis.cancel()
-  window.speechSynthesis.speak(utterance)
+  const english = availableVoices.value.find((voice) => voice.lang.toLowerCase().startsWith('en'))
+  if (english) utterance.voice = english
+
+  let started = false
+  utterance.onstart = () => {
+    started = true
+    speechMessage.value = ''
+  }
+  utterance.onerror = (event) => {
+    speechMessage.value = event.error === 'not-allowed'
+      ? '浏览器拦截了朗读，请先点一下页面再试'
+      : '朗读失败：系统可能没有可用的英文语音'
+  }
+
+  synth.speak(utterance)
+  window.setTimeout(() => {
+    if (!started && !synth.speaking) {
+      speechMessage.value = '没有发出声音：请检查系统音量，或在系统里安装英文语音包'
+    }
+  }, 900)
 }
 
 function onWindowKeydown(event: KeyboardEvent) {
@@ -238,9 +269,19 @@ function onWindowKeydown(event: KeyboardEvent) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onWindowKeydown))
+function refreshVoices() {
+  if (!speechAvailable) return
+  availableVoices.value = window.speechSynthesis.getVoices()
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onWindowKeydown)
+  refreshVoices()
+  window.speechSynthesis?.addEventListener('voiceschanged', refreshVoices)
+})
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onWindowKeydown)
+  window.speechSynthesis?.removeEventListener('voiceschanged', refreshVoices)
   if (speechAvailable) window.speechSynthesis.cancel()
 })
 </script>
@@ -290,6 +331,7 @@ onBeforeUnmount(() => {
         {{ word.phonetic || '暂无音标' }}
         <span v-if="word.part_of_speech" class="pos">{{ word.part_of_speech }}</span>
       </p>
+      <p v-if="speechMessage" class="speech-hint">{{ speechMessage }}</p>
 
       <button v-if="!revealed" class="primary wide reveal-button" :disabled="loading" @click="revealed = true">
         显示答案 <kbd>空格</kbd>

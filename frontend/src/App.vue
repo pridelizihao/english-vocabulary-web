@@ -74,7 +74,7 @@ async function syncRoute() {
     // snapshot captured when the session started.
     await loadDone(current.dictionaryId)
   } else if (current.name === 'profile') {
-    await loadProfile(30)
+    await loadProfile(371)
   }
 }
 

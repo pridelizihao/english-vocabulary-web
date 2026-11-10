@@ -1,16 +1,41 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
-import type { ProfileDictionary } from '../api'
+import type { ProfileDay, ProfileDictionary } from '../api'
 import { useSession } from '../composables/useSession'
-import { barPercent, dayLabel, heatLevel, maxAnswers, recentDays } from '../lib/profile'
+import { buildHeatmap, dayLabel, heatLevel, recentDays, WEEKDAY_LABELS } from '../lib/profile'
 import { navigate } from '../lib/router'
 
 const { profile, loading, user, startReview } = useSession()
 
 const days = computed(() => profile.value?.daily ?? [])
+const heatmap = computed(() => buildHeatmap(days.value))
 const week = computed(() => recentDays(days.value, 7))
-const weekMax = computed(() => Math.max(maxAnswers(week.value), 1))
+const weekTotals = computed(() =>
+  week.value.reduce(
+    (total, day) => ({
+      answers: total.answers + day.answers,
+      new: total.new + day.new,
+      review: total.review + day.review,
+      practice: total.practice + day.practice,
+    }),
+    { answers: 0, new: 0, review: 0, practice: 0 },
+  ),
+)
+
+const tooltip = ref<{ x: number; y: number; day: ProfileDay } | null>(null)
+
+function showTooltip(event: MouseEvent, day: ProfileDay | null) {
+  if (!day) {
+    tooltip.value = null
+    return
+  }
+  tooltip.value = { x: event.clientX, y: event.clientY, day }
+}
+
+function hideTooltip() {
+  tooltip.value = null
+}
 
 function review(item: ProfileDictionary) {
   startReview(item.id, item.due > 0 ? 'due' : 'early')
@@ -23,7 +48,7 @@ function review(item: ProfileDictionary) {
       <div>
         <p class="eyebrow">学习数据</p>
         <h2>{{ user?.username || '我' }} 的学习习惯</h2>
-        <p class="lede">按天记录答题量：新词、复习和练习分开统计，连续天数只算有答题的日子。</p>
+        <p class="lede">最近一年的答题热力图，按天记录新词、复习和练习；连续天数只算有答题的日子。</p>
       </div>
       <button class="link-button" @click="navigate('/')">← 返回词典</button>
     </div>
@@ -58,7 +83,7 @@ function review(item: ProfileDictionary) {
 
       <section class="panel profile-panel">
         <header class="profile-panel-head">
-          <strong>最近 30 天</strong>
+          <strong>学习热力图</strong>
           <span class="heat-legend">
             少
             <i class="heat-cell level-0"></i>
@@ -68,36 +93,51 @@ function review(item: ProfileDictionary) {
             多
           </span>
         </header>
-        <div class="heatmap">
-          <div
-            v-for="day in days"
-            :key="day.date"
-            class="heat-cell"
-            :class="`level-${heatLevel(day.answers)}`"
-            :title="`${day.date}：${day.answers} 次（新词 ${day.new} · 复习 ${day.review} · 练习 ${day.practice}）`"
-          ></div>
+
+        <div class="heatmap-scroll">
+          <div class="heatmap-wrap" :style="{ width: `${Math.max(heatmap.columns.length * 15, 120)}px` }">
+            <div class="heatmap-months">
+              <span
+                v-for="month in heatmap.months"
+                :key="month.index"
+                :style="{ left: `${month.index * 15}px` }"
+              >{{ month.label }}</span>
+            </div>
+            <div class="heatmap-body">
+              <div class="heatmap-weekdays">
+                <span v-for="(label, index) in WEEKDAY_LABELS" :key="index">{{ label }}</span>
+              </div>
+              <div
+                class="heatmap-grid"
+                :style="{
+                  gridTemplateColumns: `repeat(${heatmap.columns.length}, 12px)`,
+                  gridTemplateRows: 'repeat(7, 12px)',
+                }"
+              >
+                <template v-for="(column, columnIndex) in heatmap.columns" :key="columnIndex">
+                  <div
+                    v-for="(day, dayIndex) in column"
+                    :key="`${columnIndex}-${dayIndex}`"
+                    class="heat-cell"
+                    :class="day ? `level-${heatLevel(day.answers)}` : 'empty'"
+                    :title="day ? `${day.date}：${day.answers} 次` : ''"
+                    @mouseenter="showTooltip($event, day)"
+                    @mouseleave="hideTooltip"
+                  ></div>
+                </template>
+              </div>
+            </div>
+          </div>
         </div>
+
         <p class="muted profile-caption">
           今天 {{ profile.today.answers }} 次 · 新词 {{ profile.today.new }} · 复习 {{ profile.today.review }}
           <template v-if="profile.today.practice"> · 练习 {{ profile.today.practice }}</template>
           <template v-if="profile.today.extra"> · 额外新词 {{ profile.today.extra }}</template>
+          <br />
+          最近 7 天：答题 {{ weekTotals.answers }} · 新词 {{ weekTotals.new }} · 复习 {{ weekTotals.review }}
+          <template v-if="weekTotals.practice"> · 练习 {{ weekTotals.practice }}</template>
         </p>
-      </section>
-
-      <section class="panel profile-panel">
-        <header class="profile-panel-head">
-          <strong>最近 7 天</strong>
-          <span class="muted">新词 + 复习</span>
-        </header>
-        <div class="week-chart">
-          <div v-for="day in week" :key="day.date" class="week-column">
-            <div class="week-bars">
-              <span class="bar-new" :style="{ height: `${barPercent(day.new, weekMax)}%` }" :title="`新词 ${day.new}`"></span>
-              <span class="bar-review" :style="{ height: `${barPercent(day.review, weekMax)}%` }" :title="`复习 ${day.review}`"></span>
-            </div>
-            <span class="week-label">{{ dayLabel(day.date) }}</span>
-          </div>
-        </div>
       </section>
 
       <section class="panel profile-panel">
@@ -119,5 +159,13 @@ function review(item: ProfileDictionary) {
         </div>
       </section>
     </template>
+
+    <div v-if="tooltip" class="heat-tooltip" :style="{ left: `${tooltip.x + 14}px`, top: `${tooltip.y + 14}px` }">
+      <strong>{{ tooltip.day.date }}</strong>
+      <div class="heat-tooltip-row"><span>答题</span><b>{{ tooltip.day.answers }}</b></div>
+      <div class="heat-tooltip-row"><span>新词</span><b>{{ tooltip.day.new }}</b></div>
+      <div class="heat-tooltip-row"><span>复习</span><b>{{ tooltip.day.review }}</b></div>
+      <div v-if="tooltip.day.practice" class="heat-tooltip-row"><span>练习</span><b>{{ tooltip.day.practice }}</b></div>
+    </div>
   </section>
 </template>

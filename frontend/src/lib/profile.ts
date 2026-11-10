@@ -22,11 +22,61 @@ export function maxAnswers(days: ProfileDay[]) {
   return days.reduce((max, day) => Math.max(max, day.answers), 0)
 }
 
-export function barPercent(value: number, max: number) {
-  if (max <= 0) return 0
-  return Math.min(100, Math.max(value > 0 ? 6 : 0, Math.round((value / max) * 100)))
+export type HeatmapColumn = (ProfileDay | null)[]
+export type HeatmapMonth = { label: string; index: number }
+export type Heatmap = { columns: HeatmapColumn[]; months: HeatmapMonth[] }
+
+function toDate(iso: string) {
+  const [year, month, day] = iso.split('-').map(Number)
+  return new Date(year, month - 1, day)
 }
 
-export function hasActivity(day: ProfileDay) {
-  return day.answers > 0
+function toIso(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
+
+/**
+ * Turn the daily series into GitHub-style columns: one column per week,
+ * Monday first, with nulls for days outside the requested range.
+ */
+export function buildHeatmap(daily: ProfileDay[]): Heatmap {
+  if (!daily.length) return { columns: [], months: [] }
+  const byDate = new Map(daily.map((day) => [day.date, day]))
+  const first = toDate(daily[0].date)
+  const last = toDate(daily[daily.length - 1].date)
+
+  const start = new Date(first)
+  const offset = (start.getDay() + 6) % 7
+  start.setDate(start.getDate() - offset)
+
+  const columns: HeatmapColumn[] = []
+  const months: HeatmapMonth[] = []
+  let lastMonth = -1
+  let lastLabelIndex = -10
+  const cursor = new Date(start)
+
+  while (cursor <= last) {
+    const column: HeatmapColumn = []
+    let month = -1
+    for (let index = 0; index < 7; index += 1) {
+      const day = byDate.get(toIso(cursor)) ?? null
+      if (day && month === -1) month = cursor.getMonth()
+      column.push(day)
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    const columnIndex = columns.length
+    if (month !== -1 && month !== lastMonth && columnIndex - lastLabelIndex >= 3) {
+      months.push({ label: `${month + 1}月`, index: columnIndex })
+      lastMonth = month
+      lastLabelIndex = columnIndex
+    }
+    columns.push(column)
+  }
+
+  return { columns, months }
+}
+
+export const WEEKDAY_LABELS = ['一', '', '三', '', '五', '', '日']
