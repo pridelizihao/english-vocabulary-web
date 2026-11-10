@@ -38,6 +38,7 @@ const revealed = ref(false)
 const answer = ref<string[]>([])
 const result = ref<'correct' | 'wrong' | null>(null)
 const shaking = ref(false)
+const attempts = ref(0)
 const hintVisible = ref(false)
 const fullMeaningVisible = ref(false)
 const clozeBox = ref<HTMLElement | null>(null)
@@ -58,6 +59,7 @@ function reset() {
   revealed.value = false
   result.value = null
   shaking.value = false
+  attempts.value = 0
   hintVisible.value = false
   fullMeaningVisible.value = false
   answer.value = buildClozeAnswer(word.value.spelling)
@@ -99,9 +101,16 @@ function onInput(slotIndex: number, event: Event) {
 }
 
 function onSlotKeydown(slotIndex: number, event: KeyboardEvent) {
-  if (event.key === 'Backspace' && !answer.value[slotIndex]) {
+  if (event.key === 'Backspace') {
+    // Backspace removes the current letter; on an empty slot it clears the
+    // previous one instead of leaving the caret stuck there.
+    if (answer.value[slotIndex]) return
     event.preventDefault()
-    focusPreviousHidden(slotIndex)
+    const previous = [...slots.value].reverse().find((slot) => !slot.visible && slot.index < slotIndex)
+    if (previous) {
+      answer.value[previous.index] = ''
+      focusSlot(previous.index)
+    }
     return
   }
   if (event.key === 'ArrowLeft') {
@@ -117,21 +126,32 @@ function onSlotKeydown(slotIndex: number, event: KeyboardEvent) {
 
 function submitCloze() {
   if (!complete.value || props.loading) return
-  result.value = checkCloze(word.value.spelling, answer.value) ? 'correct' : 'wrong'
-  if (result.value === 'wrong') {
-    shaking.value = true
-    window.setTimeout(() => {
-      shaking.value = false
-    }, 500)
+  if (checkCloze(word.value.spelling, answer.value)) {
+    result.value = 'correct'
+    return
   }
+  attempts.value += 1
+  shaking.value = true
+  window.setTimeout(() => {
+    shaking.value = false
+  }, 500)
+  // First miss: keep the answer hidden and let the learner think again.
+  result.value = attempts.value >= 2 ? 'wrong' : 'retry'
 }
 
 function revealAnswer() {
+  attempts.value = Math.max(attempts.value, 2)
   answer.value = Array.from(word.value.spelling)
   result.value = 'wrong'
 }
 
-function retry() {
+function editAgain() {
+  result.value = null
+  focusFirstEmpty()
+}
+
+function restartAttempt() {
+  attempts.value = 0
   result.value = null
   answer.value = buildClozeAnswer(word.value.spelling)
   focusFirstEmpty()
@@ -147,7 +167,7 @@ function primaryAction() {
     return
   }
   if (result.value === 'wrong') {
-    retry()
+    restartAttempt()
     return
   }
   submitCloze()
@@ -177,6 +197,12 @@ function synthesise() {
 }
 
 function onWindowKeydown(event: KeyboardEvent) {
+  if (props.loading) return
+  if (event.key === 'Escape' && props.mode === 'cloze' && result.value !== 'correct') {
+    event.preventDefault()
+    revealAnswer()
+    return
+  }
   const target = event.target as HTMLElement | null
   const typing = Boolean(
     target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable),
@@ -188,7 +214,8 @@ function onWindowKeydown(event: KeyboardEvent) {
     }
     return
   }
-  if (props.loading) return
+  // Let Enter/Space on a focused button behave like a normal click.
+  if (target?.tagName === 'BUTTON') return
   if (props.mode === 'card') {
     if (!revealed.value && (event.key === ' ' || event.key === 'Enter')) {
       event.preventDefault()
@@ -331,7 +358,7 @@ onBeforeUnmount(() => {
         <button class="primary" :disabled="(!complete && !noBlanks) || loading" @click="noBlanks ? emitRate('good') : submitCloze()">
           {{ noBlanks ? '继续' : '检查答案' }} <kbd>回车</kbd>
         </button>
-        <button v-if="!noBlanks" class="link-button" @click="revealAnswer">看答案</button>
+        <button v-if="!noBlanks" class="link-button" @click="revealAnswer">不会，看答案 <kbd>Esc</kbd></button>
       </div>
 
       <div v-else-if="result === 'correct'" class="cloze-result">
@@ -340,18 +367,30 @@ onBeforeUnmount(() => {
         <button class="primary" :disabled="loading" @click="emitRate('good')">继续 <kbd>回车</kbd></button>
       </div>
 
-      <div v-else class="cloze-result">
-        <strong class="wrong">还差一点</strong>
-        <p>正确答案：<b>{{ word.spelling }}</b></p>
+      <div v-else-if="result === 'retry'" class="cloze-result">
+        <strong class="wrong">还不对</strong>
+        <p>还有一次机会，再想想；实在想不起来就按 Esc 看答案。</p>
         <div class="cloze-actions">
-          <button class="primary" :disabled="loading" @click="retry">再试一次</button>
+          <button class="primary" :disabled="loading" @click="editAgain">继续填 <kbd>回车</kbd></button>
+          <button :disabled="loading" @click="revealAnswer">看答案 <kbd>Esc</kbd></button>
+        </div>
+      </div>
+
+      <div v-else class="cloze-result">
+        <strong class="wrong">正确答案</strong>
+        <p class="cloze-answer">{{ word.spelling }}</p>
+        <div class="cloze-actions">
+          <button class="primary" :disabled="loading" @click="restartAttempt">再试一次</button>
           <button :disabled="loading" @click="emitRate('hard')">记为模糊</button>
         </div>
       </div>
     </section>
 
-    <p class="keyboard-hint muted">
+    <p v-if="mode === 'card'" class="keyboard-hint muted">
       快捷键：<kbd>空格</kbd> 看答案 · <kbd>1</kbd>–<kbd>4</kbd> 评分 · <kbd>回车</kbd> 确认
+    </p>
+    <p v-else class="keyboard-hint muted">
+      快捷键：<kbd>回车</kbd> 检查 · <kbd>Esc</kbd> 看答案 · <kbd>Backspace</kbd> 回退
     </p>
   </section>
 </template>

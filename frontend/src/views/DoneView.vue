@@ -59,19 +59,19 @@ const percent = computed(() =>
     <p class="lede">{{ description }}</p>
 
     <div v-if="stats" class="stats">
-      <div v-if="completed > 0">
+      <div v-if="completed > 0" title="这一轮作答的次数，含同一单词的重复">
         <strong>{{ completed }}</strong>
         <span>本次答题</span>
       </div>
-      <div>
+      <div title="今天第一次学习的单词数 / 每日新词上限">
         <strong>{{ stats.today_new }}/{{ stats.new_limit }}</strong>
         <span>今日新词</span>
       </div>
-      <div>
+      <div title="复习间隔达到 21 天（约连续答对 5 次）">
         <strong>{{ stats.mastered_words }}</strong>
         <span>已掌握</span>
       </div>
-      <div>
+      <div title="下次复习时间已到、现在就该复习的单词数">
         <strong>{{ stats.due_reviews }}</strong>
         <span>待复习</span>
       </div>

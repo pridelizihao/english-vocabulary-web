@@ -951,6 +951,15 @@ label {
   font-size: 18px;
 }
 
+.cloze-answer {
+  margin: 0;
+  color: var(--brand-strong);
+  font-size: clamp(24px, 5vw, 34px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
 .keyboard-hint {
   margin-top: 18px;
   text-align: center;
