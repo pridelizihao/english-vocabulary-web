@@ -1,16 +1,44 @@
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils import timezone
 
+
 class Dictionary(models.Model):
+    """A word list. `owner` is null for official dictionaries."""
+
     STATUS_CHOICES = [('draft', '草稿'), ('published', '已发布')]
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True)
     level = models.CharField(max_length=80, blank=True)
     version = models.CharField(max_length=40, default='1.0')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='dictionaries',
+        help_text='为空表示官方词典，所有用户可见',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
-    def __str__(self): return self.name
+
+    class Meta:
+        ordering = ['id']
+        verbose_name_plural = 'dictionaries'
+        constraints = [
+            # 官方词典（owner 为空）可以重名，个人词典不允许同名重复导入。
+            models.UniqueConstraint(fields=['owner', 'name'], name='unique_owner_dictionary_name'),
+        ]
+        indexes = [models.Index(fields=['status', 'owner'], name='dict_status_owner_idx')]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def is_personal(self):
+        return self.owner_id is not None
+
 
 class Word(models.Model):
     dictionary = models.ForeignKey(Dictionary, on_delete=models.CASCADE, related_name='words')
@@ -21,27 +49,54 @@ class Word(models.Model):
     meaning = models.TextField()
     example = models.TextField(blank=True)
     audio_url = models.URLField(blank=True)
+
     class Meta:
-        constraints = [models.UniqueConstraint(fields=['dictionary', 'spelling'], name='unique_dictionary_word')]
         ordering = ['id']
-    def __str__(self): return self.spelling
+        constraints = [
+            # 大小写不敏感的唯一约束：Abandon / abandon 视为同一个词。
+            models.UniqueConstraint(Lower('spelling'), 'dictionary', name='unique_dictionary_word_ci'),
+        ]
+        indexes = [models.Index(fields=['dictionary', 'spelling'], name='word_dict_spelling_idx')]
+
+    def __str__(self):
+        return self.spelling
+
 
 class UserDictionary(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     dictionary = models.ForeignKey(Dictionary, on_delete=models.CASCADE)
     started_at = models.DateTimeField(auto_now_add=True)
+
     class Meta:
         constraints = [models.UniqueConstraint(fields=['user', 'dictionary'], name='unique_user_dictionary')]
 
+
 class UserWordProgress(models.Model):
+    """Per-user learning state of one word.
+
+    `streak` counts consecutive good/easy answers and drives the interval table;
+    `first_learned_at` is used to enforce the daily new-word budget.
+    """
+
+    STATUS_CHOICES = [('new', '未开始'), ('learning', '学习中'), ('mastered', '已掌握')]
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     word = models.ForeignKey(Word, on_delete=models.CASCADE)
-    status = models.CharField(max_length=20, default='new')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')
     review_count = models.PositiveIntegerField(default=0)
     wrong_count = models.PositiveIntegerField(default=0)
+    streak = models.PositiveIntegerField(default=0)
+    ease = models.FloatField(default=2.5)
     next_review_at = models.DateTimeField(default=timezone.now)
     last_review_at = models.DateTimeField(null=True, blank=True)
+    first_learned_at = models.DateTimeField(null=True, blank=True)
     interval_days = models.PositiveIntegerField(default=0)
+
     class Meta:
         constraints = [models.UniqueConstraint(fields=['user', 'word'], name='unique_user_word')]
+        indexes = [
+            models.Index(fields=['user', 'next_review_at'], name='progress_user_due_idx'),
+            models.Index(fields=['user', 'first_learned_at'], name='progress_user_new_idx'),
+        ]
 
+    def __str__(self):
+        return f'{self.user} · {self.word}'

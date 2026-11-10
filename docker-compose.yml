@@ -1,15 +1,31 @@
 services:
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DJANGO_DEBUG: "0"
-      DJANGO_SECRET_KEY: change-this-in-production
-      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
-    ports:
-      - "8000:8000"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-this-in-production}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      DJANGO_DB_PATH: /app/db/db.sqlite3
     volumes:
-      - ./backend:/app
+      - backend_db:/app/db
+      - backend_static:/app/staticfiles
+    expose:
+      - "8000"
+    restart: unless-stopped
+
   frontend:
     build: ./frontend
     ports:
       - "8080:80"
+    volumes:
+      - backend_static:/usr/share/nginx/static:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_db:
+  backend_static:
