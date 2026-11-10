@@ -96,7 +96,15 @@ function onRestart() {
   const dictionaryId = current.name === 'study' || current.name === 'done'
     ? current.dictionaryId
     : activeDictionary.value?.id
-  if (dictionaryId) startStudy(dictionaryId)
+  if (!dictionaryId) return
+  const summary = stats.value
+  const hasNew = summary ? summary.remaining_new > 0 && summary.today_new < summary.new_limit : false
+  const hasDue = summary ? summary.due_reviews > 0 : false
+  if (summary && !hasNew && !hasDue) {
+    notice.value = '今天没有可继续的内容了，明天再来'
+    return
+  }
+  startStudy(dictionaryId)
 }
 </script>
 

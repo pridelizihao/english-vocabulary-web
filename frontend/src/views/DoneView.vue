@@ -50,6 +50,12 @@ const description = computed(() => {
 const percent = computed(() =>
   props.stats ? progressPercent(props.stats.learned_words, props.stats.total_words) : 0,
 )
+
+const canRestart = computed(() => {
+  if (!props.stats) return false
+  const newWordsLeft = props.stats.remaining_new > 0 && props.stats.today_new < props.stats.new_limit
+  return newWordsLeft || props.stats.due_reviews > 0
+})
 </script>
 
 <template>
@@ -88,10 +94,13 @@ const percent = computed(() =>
     </div>
 
     <div class="done-actions">
-      <button class="primary" :disabled="loading" @click="emit('restart')">
-        {{ loading ? '加载中…' : '再学一轮' }}
+      <button class="primary" :disabled="loading || !canRestart" @click="emit('restart')">
+        {{ loading ? '加载中…' : canRestart ? '再学一轮' : '今天学完了' }}
       </button>
       <button :disabled="loading" @click="emit('back')">返回词典</button>
     </div>
+    <p v-if="stats && !canRestart && reason !== 'no-words' && reason !== 'all-learned'" class="done-hint muted">
+      今天的新词额度已经用完，也没有到期的复习。明天再来，或者去背另一本词典。
+    </p>
   </section>
 </template>

@@ -1023,6 +1023,13 @@ label {
   justify-content: center;
 }
 
+.done-hint {
+  margin: 14px auto 0;
+  max-width: 42ch;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .loading-panel {
   margin-top: 40px;
   text-align: center;
