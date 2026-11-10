@@ -13,23 +13,24 @@
 backend/                       Django 项目
   config/                      settings / urls / wsgi
   vocabulary/                  唯一的业务 app
-    models.py                  Dictionary / Word / UserDictionary / UserWordProgress
+    models.py                  Dictionary / Word / UserDictionary / UserWordProgress / AnswerLog
     services.py                复习调度 schedule() 与导入解析、批量写库
     views.py                   HTTP 层（函数视图为主 + 一个 ModelViewSet）
     serializers.py             输出结构，含每个词的 preview 间隔文案
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
     management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples
-    tests.py                   后端用例（当前 25 个）
+    tests.py                   后端用例（当前 31 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
   src/lib/study.ts             纯函数：填空遮罩、队列、格式化（node 可直接测）
-  src/lib/router.ts            hash 路由：/ · /auth · /study/:id · /done/:id
+  src/lib/profile.ts           学习面板的纯函数（热力图分档、柱高）
+  src/lib/router.ts            hash 路由：/ · /auth · /profile · /study/:id · /done/:id
   src/composables/useSession.ts 全局学习会话状态与动作
-  src/views/*.vue              Auth / Dictionaries / Study / Done
+  src/views/*.vue              Auth / Dictionaries / Study / Done / Profile
   src/App.vue                  壳层 + 路由同步 + 错误/提示条
-  tests/study.test.mjs         node:test，纯逻辑
+  tests/*.test.mjs             node:test，纯逻辑
 data/
   sources/                     原始词表（CET.json、definitions.json）
   imports/                     可直接导入的 3500/5000 词 CSV
@@ -80,6 +81,9 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - **ease**：初始 2.5，区间 `[1.3, 3.2]`。
 - **每日新词预算**：`NEW_WORD_LIMIT = 20`，按 `first_learned_at` 当天计数；预算用完后 `/api/study/today` 返回空数组，前端据此显示「今日额度用完」。
 - **复习队列**：`next_review_at <= now`，上限 `REVIEW_LIMIT = 50`。
+- **额外新词**：每日基础 20 个，用户可主动要「再来 20 个」，每天额外上限 `EXTRA_NEW_LIMIT = 60`；额外新词在 `AnswerLog.is_extra` 里标记。
+- **练习**：`practice: true` 的作答只写 `AnswerLog`，绝不改动 `UserWordProgress`（间隔、streak 都不变）。
+- **答题流水**：每次作答写一条 `AnswerLog`（新词/额外/练习/间隔前后），个人面板和后续统计都基于它。
 - **个人词典**：`Dictionary.owner` 非空即个人词典；列表/详情/enroll/统计/答题共用同一可见性判断（官方 + 自己的）。
 - **单词唯一**：`(dictionary, Lower(spelling))`，`Abandon` 与 `abandon` 是同一个词，导入时合并。
 - **例句**：`Word.example` 是英文例句，`Word.example_translation` 是中文翻译；批量填充只走 `enrich_examples`（数据源 `data/examples.json`），不要在教学流程里现生成。
@@ -107,7 +111,9 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 | POST | `/api/admin/dictionaries/import` | 管理员导入到指定词典 |
 | GET | `/api/study/today?dictionary_id=&order=alpha\|random` | 今日新词（受预算限制） |
 | GET | `/api/review/today?dictionary_id=` | 到期复习 |
-| POST | `/api/study/{word_id}/answer` | 提交 `{rating: again\|hard\|good\|easy}` |
+| GET | `/api/review/early?dictionary_id=&order=weak\|due\|random&limit=` | 提前复习（练习，不改 SRS） |
+| POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?}`，practice 只记录不改间隔 |
+| GET | `/api/profile/summary?days=30` | 个人学习面板：每日/连续天数/按词典 |
 | GET | `/api/statistics?dictionary_id=` | 进度、掌握数、待复习、下次复习时间 |
 
 ## 7. 前端约定
@@ -122,8 +128,8 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 25 个）。
-- 改填空/SRS/格式化 → 改 `frontend/tests/study.test.mjs`（当前 15 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 31 个）。
+- 改填空/SRS/格式化 → 改 `frontend/tests/study.test.mjs`（当前 20 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
 
@@ -131,7 +137,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 
 - 例句与中文翻译来自 `data/examples.json`（项目生成，非第三方词典语料）；要换成授权语料，按同格式替换后跑 `enrich_examples --force` 与 `build_wordlists.py`。
 - 释义仍是 ECDICT 原始多义项文本，卡片/填空只显示 `primaryMeaning()` 截出的主释义，完整内容可展开。
-- 没有「撤销上一题」、错词本、学习历史图表；`wrong_count` 在攒但没有入口。
+- 没有「撤销上一题」和错词本；`wrong_count` 在攒但没有入口。
 - Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**。
 - 单词发音优先用 `audio_url`，缺失时退化为浏览器 Web Speech API。
 - 词表来源见 `data/sources/README.md`，商用前需确认上游授权。

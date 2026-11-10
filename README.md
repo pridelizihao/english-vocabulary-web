@@ -9,7 +9,8 @@
 - 复习调度：`again / hard / good / easy` 四档评分，间隔递增，间隔满 21 天才算「已掌握」
 - 每日预算：新词每天最多 20 个，复习优先；预算用完会提示而不是继续塞词
 - 个人词表：导入 CSV / JSON / XLSX，自动去重，只有自己可见，可删除
-- 数据面板：进度、已掌握、待复习、下次复习时间
+- 学习面板：点右上角用户名查看今日/7 天/30 天答题量、连续天数、按词典分布（热力图）
+- 额度与复习：新词学完可以「再来 20 个」（每天额外最多 60 个）；复习可以选到期复习或提前复习（练习，不改变间隔）
 
 ## 技术栈
 
@@ -51,7 +52,7 @@ npm run dev
 ## 测试
 
 ```bash
-cd backend && ../.venv/Scripts/python.exe manage.py test   # 25 个用例
+cd backend && ../.venv/Scripts/python.exe manage.py test   # 31 个用例
 cd frontend
 npm run typecheck   # tsc --noEmit
 npm run test        # 纯逻辑测试（node:test）
