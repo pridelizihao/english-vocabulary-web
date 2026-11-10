@@ -82,7 +82,6 @@ async function bootstrap() {
   try {
     const result = await api.me()
     user.value = result.user
-    await loadDictionaries()
   } catch {
     user.value = null
     dictionaries.value = []

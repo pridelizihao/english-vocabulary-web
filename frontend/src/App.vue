@@ -55,12 +55,12 @@ async function syncRoute() {
     return
   }
   if (current.name === 'dictionaries') {
-    if (!dictionaries.value.length) {
-      try {
-        await loadDictionaries()
-      } catch (cause) {
-        reportError(cause)
-      }
+    // Always refresh: the cards show per-user progress, which changes after a
+    // study session or an import, so a cached list goes stale immediately.
+    try {
+      await loadDictionaries()
+    } catch (cause) {
+      reportError(cause)
     }
   } else if (current.name === 'study') {
     if (activeDictionary.value?.id !== current.dictionaryId || !currentItem.value) {
