@@ -13,7 +13,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (event: 'restart'): void
+  (event: 'extra'): void
+  (event: 'review'): void
   (event: 'back'): void
 }>()
 
@@ -39,7 +40,7 @@ const description = computed(() => {
         ? `新词已经全部学过，还有 ${props.stats.due_reviews} 个到期复习在等你。`
         : '新词已经全部学过，接下来靠复习巩固。'
     case 'daily-limit':
-      return '每天 20 个新词更容易记牢。明天再来，或者先复习到期的词。'
+      return '每天 20 个新词更容易记牢。明天再来，或者先做一轮复习。'
     default:
       return props.completed > 0
         ? `本次答题 ${props.completed} 次。答错的词已经安排在十分钟后重新出现。`
@@ -51,11 +52,25 @@ const percent = computed(() =>
   props.stats ? progressPercent(props.stats.learned_words, props.stats.total_words) : 0,
 )
 
-const canRestart = computed(() => {
+const extraLeft = computed(() =>
+  props.stats ? Math.max(props.stats.extra_limit - props.stats.extra_used_today, 0) : 0,
+)
+
+const canStudyNew = computed(() => {
   if (!props.stats) return false
-  const newWordsLeft = props.stats.remaining_new > 0 && props.stats.today_new < props.stats.new_limit
-  return newWordsLeft || props.stats.due_reviews > 0
+  const budgetLeft = props.stats.today_new < props.stats.new_limit
+  return props.stats.remaining_new > 0 && (budgetLeft || extraLeft.value > 0)
 })
+
+const newButtonLabel = computed(() =>
+  props.stats && props.stats.today_new < props.stats.new_limit ? '再学一轮' : '再来 20 个',
+)
+
+const canReview = computed(() => Boolean(props.stats && (props.stats.due_reviews > 0 || props.stats.learned_words > 0)))
+
+const reviewButtonLabel = computed(() =>
+  props.stats && props.stats.due_reviews > 0 ? `复习 ${props.stats.due_reviews} 个` : '提前复习',
+)
 </script>
 
 <template>
@@ -94,13 +109,17 @@ const canRestart = computed(() => {
     </div>
 
     <div class="done-actions">
-      <button class="primary" :disabled="loading || !canRestart" @click="emit('restart')">
-        {{ loading ? '加载中…' : canRestart ? '再学一轮' : '今天学完了' }}
+      <button v-if="canStudyNew" class="primary" :disabled="loading" @click="emit('extra')">
+        {{ loading ? '加载中…' : newButtonLabel }}
       </button>
+      <button v-if="canReview" :class="{ primary: !canStudyNew }" :disabled="loading" @click="emit('review')">
+        {{ reviewButtonLabel }}
+      </button>
+      <button v-if="!canStudyNew && !canReview" disabled>今天学完了</button>
       <button :disabled="loading" @click="emit('back')">返回词典</button>
     </div>
-    <p v-if="stats && !canRestart && reason !== 'no-words' && reason !== 'all-learned'" class="done-hint muted">
-      今天的新词额度已经用完，也没有到期的复习。明天再来，或者去背另一本词典。
+    <p v-if="stats && !canStudyNew && !canReview && reason !== 'no-words' && reason !== 'all-learned'" class="done-hint muted">
+      今天的新词额度已经用完，也没有可复习的词。明天再来，或者去背另一本词典。
     </p>
   </section>
 </template>

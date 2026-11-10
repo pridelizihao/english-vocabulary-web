@@ -42,6 +42,7 @@ const loading = ref(false)
 const error = ref('')
 const notice = ref('')
 const importResult = ref<api.ImportSummary | null>(null)
+const profile = ref<api.ProfileSummary | null>(null)
 const mode = ref<Mode>(readStored<Mode>(MODE_KEY, ['card', 'cloze'], 'card'))
 const order = ref<Order>(readStored<Order>(ORDER_KEY, ['alpha', 'random'], 'alpha'))
 const bootstrapped = ref(false)
@@ -142,7 +143,7 @@ async function signOut() {
   navigate('/auth')
 }
 
-async function startStudy(dictionaryId: number) {
+async function startStudy(dictionaryId: number, options: { extra?: number } = {}) {
   loading.value = true
   clearMessages()
   try {
@@ -156,7 +157,7 @@ async function startStudy(dictionaryId: number) {
     activeDictionary.value = dictionary
     await api.enroll(dictionaryId)
     const [study, review, currentStats] = await Promise.all([
-      api.studyToday(dictionaryId, order.value),
+      api.studyToday(dictionaryId, order.value, options.extra ?? 0),
       api.reviewToday(dictionaryId, order.value),
       api.statistics(dictionaryId),
     ])
@@ -184,6 +185,18 @@ async function rate(rating: api.Rating) {
   loading.value = true
   clearError()
   try {
+    if (item.kind === 'practice') {
+      await api.answer(item.word.id, rating, { practice: true })
+      completed.value += 1
+      notice.value = '已记录（练习不改间隔）'
+      if (index.value + 1 >= queue.value.length) {
+        stats.value = await api.statistics(item.word.dictionary)
+        navigate(`/done/${item.word.dictionary}`)
+      } else {
+        index.value += 1
+      }
+      return
+    }
     const result = await api.answer(item.word.id, rating)
     completed.value += 1
     notice.value = result.next_review_label
@@ -210,6 +223,72 @@ async function rate(rating: api.Rating) {
     }
   } catch (cause) {
     setError(cause)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function startReview(dictionaryId: number, mode: 'due' | 'early' = 'due') {
+  loading.value = true
+  clearMessages()
+  try {
+    if (!dictionaries.value.length) await loadDictionaries()
+    const dictionary = dictionaries.value.find((item) => item.id === dictionaryId)
+    if (!dictionary) {
+      setError(new Error('这本词典不存在，或者已经被删除了'))
+      navigate('/')
+      return false
+    }
+    activeDictionary.value = dictionary
+    await api.enroll(dictionaryId)
+
+    let progressWords: api.Progress[] = []
+    let kind: 'review' | 'practice' = mode === 'due' ? 'review' : 'practice'
+    if (mode === 'due') {
+      const due = await api.reviewToday(dictionaryId, order.value)
+      progressWords = due.words
+      if (!progressWords.length) {
+        const early = await api.reviewEarly(dictionaryId)
+        progressWords = early.words
+        kind = 'practice'
+      }
+    } else {
+      const early = await api.reviewEarly(dictionaryId)
+      progressWords = early.words
+    }
+    if (!progressWords.length) {
+      notice.value = '暂时没有可复习的词'
+      navigate(`/done/${dictionaryId}`)
+      return false
+    }
+    queue.value = progressWords.map((item) => ({
+      word: item.word,
+      kind,
+      preview: item.word.preview,
+      repeats: 0,
+    }))
+    index.value = 0
+    completed.value = 0
+    stats.value = await api.statistics(dictionaryId)
+    navigate(`/study/${dictionaryId}`)
+    return true
+  } catch (cause) {
+    setError(cause)
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadProfile(days = 30) {
+  loading.value = true
+  clearError()
+  try {
+    profile.value = await api.profileSummary(days)
+    return profile.value
+  } catch (cause) {
+    setError(cause)
+    return null
   } finally {
     loading.value = false
   }
@@ -282,6 +361,7 @@ export function useSession() {
     error,
     notice,
     importResult,
+    profile,
     mode,
     order,
     bootstrapped,
@@ -293,6 +373,8 @@ export function useSession() {
     signUp,
     signOut,
     startStudy,
+    startReview,
+    loadProfile,
     rate,
     loadDone,
     deleteDictionary,

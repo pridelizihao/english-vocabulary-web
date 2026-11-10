@@ -43,7 +43,7 @@ export function checkCloze(spelling: string, answer: string[]) {
   return slots.every((slot) => (answer[slot.index] ?? '').toLowerCase() === slot.char.toLowerCase())
 }
 
-export type StudyKind = 'new' | 'review'
+export type StudyKind = 'new' | 'review' | 'practice'
 
 export type StudyItem = {
   word: Word

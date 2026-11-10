@@ -48,7 +48,13 @@ export type Progress = {
   interval_days: number
 }
 
-export type AnswerResult = Progress & { next_review_label: string; preview: RatingPreview }
+export type AnswerResult = Progress & {
+  next_review_label: string
+  preview: RatingPreview
+  practice?: boolean
+  is_new?: boolean
+  is_extra?: boolean
+}
 
 export type StudyToday = {
   dictionary_id: number
@@ -56,11 +62,41 @@ export type StudyToday = {
   total: number
   new_limit: number
   new_learned_today: number
+  extra_used_today: number
+  extra_limit: number
+  extra_budget: number
   remaining_new: number
   due_reviews: number
 }
 
 export type ReviewToday = { dictionary_id: number; words: Progress[]; total: number; limit: number }
+
+export type ProfileDay = {
+  date: string
+  new: number
+  review: number
+  practice: number
+  extra: number
+  answers: number
+}
+
+export type ProfileDictionary = {
+  id: number
+  name: string
+  learned: number
+  mastered: number
+  due: number
+}
+
+export type ProfileSummary = {
+  days: number
+  today: ProfileDay
+  streak: number
+  totals: { answers: number; active_days: number; learned: number; mastered: number; due: number }
+  daily: ProfileDay[]
+  dictionaries: ProfileDictionary[]
+  extra: { used_today: number; limit: number }
+}
 
 export type Statistics = {
   total_words: number
@@ -73,6 +109,8 @@ export type Statistics = {
   remaining_new: number
   progress_percent: number
   next_review_at: string | null
+  extra_used_today: number
+  extra_limit: number
 }
 
 export type ImportSummary = {
@@ -219,21 +257,32 @@ export async function deleteDictionary(dictionaryId: number) {
   })
 }
 
-export async function studyToday(dictionaryId: number, order: 'alpha' | 'random') {
-  return request<StudyToday>(`/study/today?dictionary_id=${dictionaryId}&order=${order}`)
+export async function studyToday(dictionaryId: number, order: 'alpha' | 'random', extra = 0) {
+  const suffix = extra > 0 ? `&extra=${extra}` : ''
+  return request<StudyToday>(`/study/today?dictionary_id=${dictionaryId}&order=${order}${suffix}`)
 }
 
 export async function reviewToday(dictionaryId: number, order: 'alpha' | 'random') {
   return request<ReviewToday>(`/review/today?dictionary_id=${dictionaryId}&order=${order}`)
 }
 
-export async function answer(wordId: number, rating: Rating) {
+export async function answer(wordId: number, rating: Rating, options: { practice?: boolean } = {}) {
   await ensureCsrf()
   return request<AnswerResult>(`/study/${wordId}/answer`, {
     method: 'POST',
-    body: JSON.stringify({ rating }),
+    body: JSON.stringify({ rating, practice: Boolean(options.practice) }),
     headers: csrfHeaders(),
   })
+}
+
+export async function reviewEarly(dictionaryId: number, order: 'weak' | 'due' | 'random' = 'weak', limit = 20) {
+  return request<ReviewToday & { mode: string }>(
+    `/review/early?dictionary_id=${dictionaryId}&order=${order}&limit=${limit}`,
+  )
+}
+
+export async function profileSummary(days = 30) {
+  return request<ProfileSummary>(`/profile/summary?days=${days}`)
 }
 
 export async function statistics(dictionaryId: number) {

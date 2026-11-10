@@ -7,6 +7,7 @@ import { navigate, route } from './lib/router'
 import AuthView from './views/AuthView.vue'
 import DictionariesView from './views/DictionariesView.vue'
 import DoneView from './views/DoneView.vue'
+import ProfileView from './views/ProfileView.vue'
 import StudyView from './views/StudyView.vue'
 
 const {
@@ -26,6 +27,8 @@ const {
   bootstrap,
   signOut,
   startStudy,
+  startReview,
+  loadProfile,
   rate,
   loadDone,
   loadDictionaries,
@@ -67,9 +70,11 @@ async function syncRoute() {
       await startStudy(current.dictionaryId)
     }
   } else if (current.name === 'done') {
-    if (!stats.value || activeDictionary.value?.id !== current.dictionaryId) {
-      await loadDone(current.dictionaryId)
-    }
+    // Stats change while studying, so always refresh instead of reusing the
+    // snapshot captured when the session started.
+    await loadDone(current.dictionaryId)
+  } else if (current.name === 'profile') {
+    await loadProfile(30)
   }
 }
 
@@ -91,20 +96,25 @@ function handleMode(value: 'card' | 'cloze') {
   mode.value = value
 }
 
-function onRestart() {
+function currentDictionaryId() {
   const current = route.value
-  const dictionaryId = current.name === 'study' || current.name === 'done'
-    ? current.dictionaryId
-    : activeDictionary.value?.id
+  if (current.name === 'study' || current.name === 'done') return current.dictionaryId
+  return activeDictionary.value?.id
+}
+
+function goProfile() {
+  navigate('/profile')
+}
+
+function onExtra() {
+  const dictionaryId = currentDictionaryId()
+  if (dictionaryId) startStudy(dictionaryId, { extra: 20 })
+}
+
+function onReview() {
+  const dictionaryId = currentDictionaryId()
   if (!dictionaryId) return
-  const summary = stats.value
-  const hasNew = summary ? summary.remaining_new > 0 && summary.today_new < summary.new_limit : false
-  const hasDue = summary ? summary.due_reviews > 0 : false
-  if (summary && !hasNew && !hasDue) {
-    notice.value = '今天没有可继续的内容了，明天再来'
-    return
-  }
-  startStudy(dictionaryId)
+  startReview(dictionaryId, stats.value && stats.value.due_reviews > 0 ? 'due' : 'early')
 }
 </script>
 
@@ -119,7 +129,7 @@ function onRestart() {
         </span>
       </a>
       <div v-if="user" class="user-bar">
-        <span class="muted">{{ user.username }}</span>
+        <button class="link-button user-link" @click="goProfile">{{ user.username }}</button>
         <button class="link-button" @click="signOut">退出</button>
       </div>
     </header>
@@ -157,9 +167,12 @@ function onRestart() {
       :completed="completed"
       :reason="reason"
       :loading="loading"
-      @restart="onRestart"
+      @extra="onExtra"
+      @review="onReview"
       @back="goDictionaries"
     />
+
+    <ProfileView v-else-if="route.name === 'profile'" />
 
     <section v-else class="panel loading-panel" aria-busy="true">
       <p class="muted">正在载入学习进度…</p>

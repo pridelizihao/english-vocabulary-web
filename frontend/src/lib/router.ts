@@ -5,11 +5,13 @@ export type Route =
   | { name: 'dictionaries' }
   | { name: 'study'; dictionaryId: number }
   | { name: 'done'; dictionaryId: number }
+  | { name: 'profile' }
 
 export function parsePath(hash: string): Route {
   const path = hash.replace(/^#/, '').replace(/\/+$/, '')
   if (path === '' || path === '/') return { name: 'dictionaries' }
   if (path === '/auth') return { name: 'auth' }
+  if (path === '/profile') return { name: 'profile' }
   const study = /^\/study\/(\d+)$/.exec(path)
   if (study) return { name: 'study', dictionaryId: Number(study[1]) }
   const done = /^\/done\/(\d+)$/.exec(path)
@@ -25,6 +27,8 @@ export function pathOf(route: Route) {
       return `/study/${route.dictionaryId}`
     case 'done':
       return `/done/${route.dictionaryId}`
+    case 'profile':
+      return '/profile'
     default:
       return '/'
   }

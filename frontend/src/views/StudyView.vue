@@ -50,6 +50,7 @@ const complete = computed(() => isClozeComplete(word.value.spelling, answer.valu
 const exampleParts = computed(() => splitExample(word.value.example, word.value.spelling))
 const maskedExample = computed(() => maskWordInExample(word.value.example, word.value.spelling))
 const shortMeaning = computed(() => primaryMeaning(word.value.meaning))
+const kindLabel = computed(() => ({ new: '新词', review: '复习', practice: '练习' }[props.item.kind]))
 const hasMoreMeaning = computed(() => shortMeaning.value !== word.value.meaning.trim())
 const progress = computed(() => (props.total ? Math.round((props.index / props.total) * 100) : 0))
 const speechAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window
@@ -250,7 +251,7 @@ onBeforeUnmount(() => {
       <div class="study-heading-main">
         <button class="link-button back" @click="emit('back')">← {{ dictionaryName }}</button>
         <p class="eyebrow">
-          <span class="kind-badge" :class="item.kind">{{ item.kind === 'new' ? '新词' : '复习' }}</span>
+          <span class="kind-badge" :class="item.kind">{{ kindLabel }}</span>
           今日新词 {{ newLearnedToday }}/{{ newLimit }}
           <template v-if="dueReviews"> · 待复习 {{ dueReviews }}</template>
         </p>
@@ -314,7 +315,7 @@ onBeforeUnmount(() => {
             @click="emitRate(rating)"
           >
             <span class="rate-label">{{ RATING_META[rating].label }}</span>
-            <span class="rate-hint">{{ rateHint(item.preview, rating) }}</span>
+            <span class="rate-hint">{{ item.kind === 'practice' ? '仅记录' : rateHint(item.preview, rating) }}</span>
             <kbd>{{ position + 1 }}</kbd>
           </button>
         </div>
@@ -363,7 +364,8 @@ onBeforeUnmount(() => {
 
       <div v-else-if="result === 'correct'" class="cloze-result">
         <strong class="correct">回答正确</strong>
-        <p>下次复习：{{ item.preview?.good || '按计划' }}</p>
+        <p v-if="item.kind === 'practice'">练习已记录，不改变复习间隔</p>
+        <p v-else>下次复习：{{ item.preview?.good || '按计划' }}</p>
         <button class="primary" :disabled="loading" @click="emitRate('good')">继续 <kbd>回车</kbd></button>
       </div>
 

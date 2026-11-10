@@ -1035,6 +1035,185 @@ label {
   text-align: center;
 }
 
+.user-link {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.kind-badge.practice {
+  background: #eef2fb;
+  color: #3b5bdb;
+}
+
+.profile-section {
+  max-width: 900px;
+  margin-inline: auto;
+}
+
+.profile-hero {
+  align-items: flex-start;
+}
+
+.profile-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.profile-card {
+  display: grid;
+  gap: 2px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.profile-card strong {
+  font-size: clamp(22px, 3vw, 30px);
+  color: var(--brand);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.profile-panel {
+  margin-top: 16px;
+}
+
+.profile-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.profile-caption {
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.heatmap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.heatmap .heat-cell {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: #f6edf1;
+}
+
+@media (max-width: 640px) {
+  .heatmap .heat-cell {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+.heat-cell.level-0 {
+  background: #f6edf1;
+}
+
+.heat-cell.level-1 {
+  background: #f8c3d5;
+}
+
+.heat-cell.level-2 {
+  background: #e9799f;
+}
+
+.heat-cell.level-3 {
+  background: #c22f61;
+}
+
+.heat-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.heat-legend .heat-cell {
+  width: 12px;
+  height: 12px;
+}
+
+.week-chart {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.week-column {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+
+.week-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  width: 100%;
+  max-width: 56px;
+  height: 110px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.week-bars span {
+  display: block;
+  width: 45%;
+  border-radius: 4px 4px 0 0;
+}
+
+.bar-new {
+  background: var(--brand);
+}
+
+.bar-review {
+  background: #f3b3c8;
+}
+
+.week-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.profile-dictionaries {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-dictionary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.profile-dictionary:first-child {
+  border-top: 0;
+}
+
+.profile-dictionary p {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
