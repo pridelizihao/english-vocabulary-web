@@ -130,7 +130,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 ## 8. 测试与提交
 
 - 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 31 个）。
-- 改填空/SRS/热力图 → 改 `frontend/tests/*.test.mjs`（当前 23 个）。
+- 改填空/SRS/热力图/朗读 → 改 `frontend/tests/*.test.mjs`（当前 27 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
 
@@ -140,7 +140,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 释义仍是 ECDICT 原始多义项文本，卡片/填空只显示 `primaryMeaning()` 截出的主释义，完整内容可展开。
 - 没有「撤销上一题」和错词本；`wrong_count` 在攒但没有入口。
 - Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**。
-- 单词发音优先用 `audio_url`，缺失时用浏览器 Web Speech API；卡片和填空都有「🔊 朗读」按钮，需要一次真实点击，没有英文语音时会显示提示。
+- 单词发音顺序是「词典自带 `audio_url` → 系统英文语音（Web Speech API）→ 有道在线发音」，卡片和填空都有「🔊 朗读」按钮；在线发音会把单词发到 `dict.youdao.com`，没有英文语音包时靠它兜底。
 - 词表来源见 `data/sources/README.md`，商用前需确认上游授权。
 - SQLite 单文件；要上多实例/高并发前先换 PostgreSQL，并把 `db.sqlite3` 从仓库外备份策略里接进来。
 

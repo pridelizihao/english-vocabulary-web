@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { Rating } from '../api'
+import { englishVoice, onlineSpeechUrl } from '../lib/speech'
 import {
   RATINGS,
   RATING_META,
@@ -56,9 +57,10 @@ const kindLabel = computed(() => ({ new: '新词', review: '复习', practice: '
 const hasMoreMeaning = computed(() => shortMeaning.value !== word.value.meaning.trim())
 const progress = computed(() => (props.total ? Math.round((props.index / props.total) * 100) : 0))
 const speechAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window
-const canSpeak = speechAvailable || Boolean(word.value.audio_url || word.value.pronunciation_url)
+let player: HTMLAudioElement | null = null
 
 function reset() {
+  stopPlayback()
   revealed.value = false
   result.value = null
   shaking.value = false
@@ -182,50 +184,95 @@ function emitRate(rating: Rating) {
   emit('rate', rating)
 }
 
-function speak() {
+// 朗读顺序：词典自带音频 → 系统英文语音 → 在线发音（有道）。
+async function speak() {
   speechMessage.value = ''
-  const source = word.value.audio_url || word.value.pronunciation_url
-  if (source) {
-    const audio = new Audio(source)
-    audio.play().catch(() => synthesise())
-    return
-  }
-  synthesise()
+  stopPlayback()
+  const provided = word.value.audio_url || word.value.pronunciation_url
+  if (provided && (await playUrl(provided))) return
+  if (await speakLocally()) return
+  if (await playUrl(onlineSpeechUrl(word.value.spelling))) return
+  speechMessage.value = '朗读失败：浏览器没有放出声音（可能被拦截，或没有可用的英文语音）'
 }
 
-function synthesise() {
-  if (!speechAvailable) {
-    speechMessage.value = '当前浏览器不支持语音朗读'
-    return
+function stopPlayback() {
+  if (player) {
+    player.pause()
+    player.src = ''
+    player = null
   }
-  const synth = window.speechSynthesis
-  if (!synth) return
-  if (synth.speaking || synth.pending) synth.cancel()
-  synth.resume()
-
-  const utterance = new SpeechSynthesisUtterance(word.value.spelling)
-  utterance.lang = 'en-US'
-  utterance.rate = 0.9
-  const english = availableVoices.value.find((voice) => voice.lang.toLowerCase().startsWith('en'))
-  if (english) utterance.voice = english
-
-  let started = false
-  utterance.onstart = () => {
-    started = true
-    speechMessage.value = ''
-  }
-  utterance.onerror = (event) => {
-    speechMessage.value = event.error === 'not-allowed'
-      ? '浏览器拦截了朗读，请先点一下页面再试'
-      : '朗读失败：系统可能没有可用的英文语音'
-  }
-
-  synth.speak(utterance)
-  window.setTimeout(() => {
-    if (!started && !synth.speaking) {
-      speechMessage.value = '没有发出声音：请检查系统音量，或在系统里安装英文语音包'
+  if (speechAvailable) {
+    try {
+      window.speechSynthesis.cancel()
+    } catch {
+      // 浏览器可能禁用 speechSynthesis，忽略即可
     }
-  }, 900)
+  }
+}
+
+function playUrl(url: string) {
+  return new Promise<boolean>((resolve) => {
+    try {
+      const audio = new Audio(url)
+      player = audio
+      let settled = false
+      let timer = 0
+      const finish = (ok: boolean) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(ok)
+      }
+      timer = window.setTimeout(() => finish(false), 6000)
+      audio.onerror = () => finish(false)
+      audio.play().then(() => finish(true)).catch(() => finish(false))
+    } catch {
+      resolve(false)
+    }
+  })
+}
+
+function speakLocally() {
+  return new Promise<boolean>((resolve) => {
+    if (!speechAvailable) {
+      resolve(false)
+      return
+    }
+    const voice = englishVoice(availableVoices.value)
+    // 没有英文语音时不硬试，直接走在线发音。
+    if (!voice) {
+      resolve(false)
+      return
+    }
+    const synth = window.speechSynthesis
+    const utterance = new SpeechSynthesisUtterance(word.value.spelling)
+    utterance.voice = voice
+    utterance.lang = voice.lang || 'en-US'
+    utterance.rate = 0.9
+    let settled = false
+    let timer = 0
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      if (!ok) {
+        try {
+          synth.cancel()
+        } catch {
+          // 已停止或浏览器不支持，忽略
+        }
+      }
+      resolve(ok)
+    }
+    timer = window.setTimeout(() => finish(false), 2500)
+    utterance.onstart = () => finish(true)
+    utterance.onerror = () => finish(false)
+    try {
+      synth.speak(utterance)
+    } catch {
+      finish(false)
+    }
+  })
 }
 
 function onWindowKeydown(event: KeyboardEvent) {
@@ -282,7 +329,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onWindowKeydown)
   window.speechSynthesis?.removeEventListener('voiceschanged', refreshVoices)
-  if (speechAvailable) window.speechSynthesis.cancel()
+  stopPlayback()
 })
 </script>
 
@@ -325,7 +372,7 @@ onBeforeUnmount(() => {
     <section v-if="mode === 'card'" class="card">
       <div class="word-row">
         <h3 :class="{ long: word.spelling.length > 10 }">{{ word.spelling }}</h3>
-        <button v-if="canSpeak" class="speak-button" title="朗读单词" aria-label="朗读单词" @click="speak">🔊 朗读</button>
+        <button class="speak-button" title="朗读单词" aria-label="朗读单词" @click="speak">🔊 朗读</button>
       </div>
       <p class="phonetic">
         {{ word.phonetic || '暂无音标' }}
@@ -384,7 +431,7 @@ onBeforeUnmount(() => {
         </template>
       </div>
       <p v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</p>
-      <button v-if="canSpeak" class="speak-button" @click="speak">🔊 朗读</button>
+      <button class="speak-button" title="朗读单词" aria-label="朗读单词" @click="speak">🔊 朗读</button>
       <p v-if="speechMessage" class="speech-hint">{{ speechMessage }}</p>
 
       <div v-if="word.example" class="cloze-hint">
