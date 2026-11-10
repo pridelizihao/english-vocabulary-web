@@ -25,7 +25,7 @@ backend/                       Django 项目
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
   src/lib/study.ts             纯函数：填空遮罩、队列、格式化（node 可直接测）
-  src/lib/profile.ts           学习面板的纯函数（热力图分档、柱高）
+  src/lib/profile.ts           学习面板的纯函数（热力图分档、周网格）
   src/lib/router.ts            hash 路由：/ · /auth · /profile · /study/:id · /done/:id
   src/composables/useSession.ts 全局学习会话状态与动作
   src/views/*.vue              Auth / Dictionaries / Study / Done / Profile
@@ -113,7 +113,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 | GET | `/api/review/today?dictionary_id=` | 到期复习 |
 | GET | `/api/review/early?dictionary_id=&order=weak\|due\|random&limit=` | 提前复习（练习，不改 SRS） |
 | POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?}`，practice 只记录不改间隔 |
-| GET | `/api/profile/summary?days=30` | 个人学习面板：每日/连续天数/按词典 |
+| GET | `/api/profile/summary?days=371` | 个人学习面板：每日/连续天数/按词典（days 支持 7–371） |
 | GET | `/api/statistics?dictionary_id=` | 进度、掌握数、待复习、下次复习时间 |
 
 ## 7. 前端约定
@@ -129,7 +129,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 ## 8. 测试与提交
 
 - 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 31 个）。
-- 改填空/SRS/格式化 → 改 `frontend/tests/study.test.mjs`（当前 20 个）。
+- 改填空/SRS/热力图 → 改 `frontend/tests/*.test.mjs`（当前 23 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
 
@@ -139,7 +139,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 释义仍是 ECDICT 原始多义项文本，卡片/填空只显示 `primaryMeaning()` 截出的主释义，完整内容可展开。
 - 没有「撤销上一题」和错词本；`wrong_count` 在攒但没有入口。
 - Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**。
-- 单词发音优先用 `audio_url`，缺失时退化为浏览器 Web Speech API。
+- 单词发音优先用 `audio_url`，缺失时用浏览器 Web Speech API（需要一次真实点击；没有英文语音时会显示提示）。
 - 词表来源见 `data/sources/README.md`，商用前需确认上游授权。
 - SQLite 单文件；要上多实例/高并发前先换 PostgreSQL，并把 `db.sqlite3` 从仓库外备份策略里接进来。
 
