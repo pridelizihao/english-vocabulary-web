@@ -19,7 +19,7 @@ Django 5 · Django REST Framework · SQLite · Vue 3 · Vite · TypeScript
 ```
 backend/    Django 项目（api、admin、管理命令）
 frontend/   Vue 3 + Vite 前端
-data/       词表来源、可导入 CSV、示例数据
+data/       词表来源、可导入 CSV、CSV 模板
 docs/       审查报告与设计说明
 AGENTS.md   给后续开发/代理的约定与踩坑清单
 ```
@@ -32,7 +32,7 @@ AGENTS.md   给后续开发/代理的约定与踩坑清单
 cd backend
 ../.venv/Scripts/python.exe manage.py migrate        # Windows
 # Linux/macOS: ../.venv/bin/python manage.py migrate
-../.venv/Scripts/python.exe manage.py seed_demo
+../.venv/Scripts/python.exe manage.py seed_dictionaries
 ../.venv/Scripts/python.exe manage.py seed_wordlists  # 导入 3500/5000 词并发布
 ../.venv/Scripts/python.exe manage.py createsuperuser
 ../.venv/Scripts/python.exe manage.py runserver
@@ -51,7 +51,7 @@ npm run dev
 ## 测试
 
 ```bash
-cd backend && ../.venv/Scripts/python.exe manage.py test   # 24 个用例
+cd backend && ../.venv/Scripts/python.exe manage.py test   # 25 个用例
 cd frontend
 npm run typecheck   # tsc --noEmit
 npm run test        # 纯逻辑测试（node:test）
@@ -93,7 +93,7 @@ cp .env.example .env    # 填写 DJANGO_SECRET_KEY 等
 docker compose up --build
 ```
 
-访问 `http://localhost:8080`。容器启动时会自动 migrate、导入示例词典与 `data/imports` 词表并执行 collectstatic。
+访问 `http://localhost:8080`。容器启动时会自动 migrate、创建官方词典、导入 `data/imports` 词表并执行 collectstatic。
 
 > 本机开发环境没有 Docker，镜像配置尚未实机验证；如果启动失败，优先检查卷挂载与 `DJANGO_ALLOWED_HOSTS`。
 

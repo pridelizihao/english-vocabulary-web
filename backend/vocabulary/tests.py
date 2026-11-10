@@ -354,3 +354,14 @@ class EnrichExamplesTests(ApiTestCase):
         self.words[0].refresh_from_db()
         self.assertEqual(self.words[0].example, 'New example here.')
         self.assertEqual(self.words[0].example_translation, '新的例句。')
+
+class SeedDictionariesTests(ApiTestCase):
+    def test_seed_creates_only_the_two_official_dictionaries(self):
+        Dictionary.objects.all().delete()
+        call_command('seed_dictionaries', stdout=io.StringIO())
+        names = set(Dictionary.objects.values_list('name', flat=True))
+        self.assertEqual(names, {'大学英语四级 3500 词', '大学英语六级 5000 词'})
+        self.assertFalse(Dictionary.objects.filter(name='示例英语词汇').exists())
+        # running it twice must not duplicate anything
+        call_command('seed_dictionaries', stdout=io.StringIO())
+        self.assertEqual(Dictionary.objects.count(), 2)
