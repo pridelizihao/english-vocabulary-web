@@ -15,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'extra'): void
   (event: 'review'): void
+  (event: 'wrong'): void
   (event: 'back'): void
 }>()
 
@@ -115,7 +116,10 @@ const reviewButtonLabel = computed(() =>
       <button v-if="canReview" :class="{ primary: !canStudyNew }" :disabled="loading" @click="emit('review')">
         {{ reviewButtonLabel }}
       </button>
-      <button v-if="!canStudyNew && !canReview" disabled>今天学完了</button>
+      <button v-if="stats && stats.wrong_words > 0" :disabled="loading" @click="emit('wrong')">
+        练错词 {{ stats.wrong_words }} 个
+      </button>
+      <button v-if="!canStudyNew && !canReview && !(stats && stats.wrong_words > 0)" disabled>今天学完了</button>
       <button :disabled="loading" @click="emit('back')">返回词典</button>
     </div>
     <p v-if="stats && !canStudyNew && !canReview && reason !== 'no-words' && reason !== 'all-learned'" class="done-hint muted">

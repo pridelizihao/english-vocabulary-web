@@ -9,6 +9,8 @@ import DictionariesView from './views/DictionariesView.vue'
 import DoneView from './views/DoneView.vue'
 import ProfileView from './views/ProfileView.vue'
 import StudyView from './views/StudyView.vue'
+import WordDetailView from './views/WordDetailView.vue'
+import WordsView from './views/WordsView.vue'
 
 const {
   user,
@@ -28,8 +30,11 @@ const {
   signOut,
   startStudy,
   startReview,
+  startWrong,
   loadProfile,
   rate,
+  undo,
+  canUndo,
   loadDone,
   loadDictionaries,
   clearError,
@@ -116,6 +121,11 @@ function onReview() {
   if (!dictionaryId) return
   startReview(dictionaryId, stats.value && stats.value.due_reviews > 0 ? 'due' : 'early')
 }
+
+function onWrong() {
+  const dictionaryId = currentDictionaryId()
+  if (dictionaryId) startWrong(dictionaryId)
+}
 </script>
 
 <template>
@@ -144,6 +154,14 @@ function onReview() {
 
     <DictionariesView v-else-if="route.name === 'dictionaries'" />
 
+    <WordsView v-else-if="route.name === 'words'" :dictionary-id="route.dictionaryId" />
+
+    <WordDetailView
+      v-else-if="route.name === 'word'"
+      :dictionary-id="route.dictionaryId"
+      :word-id="route.wordId"
+    />
+
     <StudyView
       v-else-if="route.name === 'study' && currentItem"
       :item="currentItem"
@@ -155,7 +173,9 @@ function onReview() {
       :new-learned-today="stats?.today_new ?? 0"
       :new-limit="stats?.new_limit ?? 20"
       :due-reviews="stats?.due_reviews ?? 0"
+      :can-undo="canUndo"
       @rate="rate"
+      @undo="undo"
       @back="goDictionaries"
       @update:mode="handleMode"
     />
@@ -169,6 +189,7 @@ function onReview() {
       :loading="loading"
       @extra="onExtra"
       @review="onReview"
+      @wrong="onWrong"
       @back="goDictionaries"
     />
 

@@ -479,3 +479,285 @@ class ActivityAndPracticeTests(ApiTestCase):
         data = self.client.get(f'/api/statistics?dictionary_id={self.dictionary.id}').data
         self.assertEqual(data['extra_used_today'], 0)
         self.assertEqual(data['extra_limit'], 60)
+
+
+class WordBrowserTests(ApiTestCase):
+    def url(self, **params):
+        query = '&'.join(f'{key}={value}' for key, value in params.items())
+        return f'/api/dictionaries/{self.dictionary.id}/words?{query}'
+
+    def test_search_matches_spelling_and_meaning(self):
+        self.login()
+        found = self.client.get(self.url(q='aban')).data
+        self.assertEqual([item['spelling'] for item in found['results']], ['abandon'])
+
+        by_meaning = self.client.get(self.url(q='能力')).data
+        self.assertEqual([item['spelling'] for item in by_meaning['results']], ['ability'])
+        self.assertEqual(by_meaning['query'], '能力')
+
+        nothing = self.client.get(self.url(q='zzzz')).data
+        self.assertEqual(nothing['results'], [])
+        self.assertEqual(nothing['total'], 0)
+
+    def test_filters_and_counts_reflect_progress(self):
+        Word.objects.create(dictionary=self.dictionary, spelling='zebra', meaning='斑马')
+        now = timezone.now()
+        UserWordProgress.objects.create(
+            user=self.user, word=self.words[0], status='mastered', interval_days=30,
+            streak=5, wrong_count=2, first_learned_at=now - timedelta(days=40),
+            next_review_at=now + timedelta(days=30),
+        )
+        UserWordProgress.objects.create(
+            user=self.user, word=self.words[1], status='learning', interval_days=1,
+            next_review_at=now - timedelta(hours=1), first_learned_at=now - timedelta(days=1),
+        )
+        self.login()
+        data = self.client.get(self.url()).data
+        self.assertEqual(data['counts'], {'all': 3, 'new': 1, 'learning': 1, 'mastered': 1, 'due': 1, 'wrong': 1})
+        zebra = next(item for item in data['results'] if item['spelling'] == 'zebra')
+        self.assertEqual(zebra['status'], 'new')
+        self.assertEqual(zebra['interval_days'], 0)
+
+        mastered = self.client.get(self.url(filter='mastered')).data
+        self.assertEqual([item['spelling'] for item in mastered['results']], ['abandon'])
+        self.assertEqual(mastered['results'][0]['wrong_count'], 2)
+        self.assertEqual(mastered['results'][0]['status'], 'mastered')
+
+        due = self.client.get(self.url(filter='due')).data
+        self.assertEqual([item['spelling'] for item in due['results']], ['ability'])
+
+        wrong = self.client.get(self.url(filter='wrong')).data
+        self.assertEqual([item['spelling'] for item in wrong['results']], ['abandon'])
+
+    def test_sorting_options_are_stable(self):
+        self.login()
+        for sort in ('alpha', 'recent', 'due', 'wrong', 'unknown'):
+            response = self.client.get(self.url(sort=sort))
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(len(response.data['results']), 2)
+        self.assertEqual(self.client.get(self.url(sort='alpha')).data['sort'], 'alpha')
+        self.assertEqual(self.client.get(self.url(sort='unknown')).data['sort'], 'alpha')
+
+    def test_pagination_is_clamped(self):
+        self.login()
+        first = self.client.get(self.url(page_size=1)).data
+        self.assertEqual(first['pages'], 2)
+        self.assertEqual(first['page'], 1)
+        self.assertEqual(len(first['results']), 1)
+
+        beyond = self.client.get(self.url(page_size=1, page=99)).data
+        self.assertEqual(beyond['page'], 2)
+        self.assertEqual(len(beyond['results']), 1)
+
+    def test_anonymous_can_browse_official_without_progress(self):
+        response = APIClient().get(self.url())
+        self.assertEqual(response.status_code, 200)
+        data = response.data
+        self.assertFalse(data['enrolled'])
+        self.assertEqual(data['counts']['all'], 2)
+        self.assertEqual(data['counts']['new'], 2)
+        self.assertEqual(data['counts']['due'], 0)
+        self.assertEqual(data['results'][0]['status'], 'new')
+        self.assertEqual(APIClient().get(self.url(filter='due')).data['results'], [])
+
+    def test_personal_dictionary_is_not_browsable_by_others(self):
+        personal = Dictionary.objects.create(name='Mine', owner=self.user, status='published')
+        Word.objects.create(dictionary=personal, spelling='secret', meaning='秘密')
+        other = get_user_model().objects.create_user(username='browser', password=PASSWORD)
+        other_client = APIClient()
+        other_client.post('/api/auth/login', {'username': 'browser', 'password': PASSWORD}, format='json')
+        self.assertEqual(other_client.get(f'/api/dictionaries/{personal.id}/words').status_code, 404)
+        self.assertEqual(other_client.get('/api/words/' + str(Word.objects.get(spelling='secret').id)).status_code, 404)
+
+
+class WordDetailTests(ApiTestCase):
+    def test_detail_includes_progress_preview_and_history(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        response = self.client.get(f'/api/words/{self.words[0].id}')
+        self.assertEqual(response.status_code, 200, response.data)
+        data = response.data
+        self.assertEqual(data['spelling'], 'abandon')
+        self.assertEqual(data['dictionary']['id'], self.dictionary.id)
+        self.assertEqual(data['progress']['interval_days'], 1)
+        self.assertEqual(set(data['preview']), {'again', 'hard', 'good', 'easy'})
+        self.assertEqual(len(data['history']), 1)
+        self.assertEqual(data['history'][0]['rating'], 'good')
+        self.assertFalse(data['history'][0]['is_practice'])
+
+    def test_detail_labels_practice_history(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        self.client.post(f'/api/study/{self.words[0].id}/answer', {'rating': 'again', 'practice': True}, format='json')
+        history = self.client.get(f'/api/words/{self.words[0].id}').data['history']
+        self.assertEqual([item['rating'] for item in history], ['again', 'good'])
+        self.assertTrue(history[0]['is_practice'])
+
+    def test_unknown_word_returns_404(self):
+        self.login()
+        response = self.client.get('/api/words/999999')
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data['detail'], '单词不存在或没有访问权限')
+
+    def test_anonymous_detail_has_no_progress(self):
+        data = APIClient().get(f'/api/words/{self.words[0].id}').data
+        self.assertIsNone(data['progress'])
+        self.assertEqual(data['history'], [])
+
+
+class WrongWordTests(ApiTestCase):
+    def test_wrong_list_only_contains_missed_words(self):
+        now = timezone.now()
+        self.login()
+        self.enroll()
+        for index, wrong in enumerate((3, 1)):
+            word = Word.objects.create(dictionary=self.dictionary, spelling=f'wrong{index}', meaning='x')
+            UserWordProgress.objects.create(
+                user=self.user, word=word, wrong_count=wrong, last_review_at=now - timedelta(days=index),
+            )
+        data = self.client.get(f'/api/review/wrong?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(data['total'], 2)
+        self.assertEqual(len(data['words']), 2)
+        self.assertEqual([item['word']['spelling'] for item in data['words']], ['wrong0', 'wrong1'])
+
+        limited = self.client.get(f'/api/review/wrong?dictionary_id={self.dictionary.id}&limit=1&order=recent').data
+        self.assertEqual(len(limited['words']), 1)
+        self.assertEqual(limited['words'][0]['word']['spelling'], 'wrong0')
+
+    def test_wrong_list_requires_enrollment(self):
+        self.login()
+        self.assertEqual(self.client.get(f'/api/review/wrong?dictionary_id={self.dictionary.id}').status_code, 403)
+
+
+class UndoTests(ApiTestCase):
+    def latest_log(self):
+        return AnswerLog.objects.filter(user=self.user, undone_at__isnull=True).order_by('-created_at', '-id').first()
+
+    def test_undo_restores_previous_interval(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        self.answer(self.words[0], 'good')
+        progress = UserWordProgress.objects.get(user=self.user, word=self.words[0])
+        self.assertEqual((progress.interval_days, progress.review_count), (3, 2))
+
+        response = self.client.post(f'/api/answers/{self.latest_log().id}/undo')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data['deleted_progress'])
+        progress.refresh_from_db()
+        self.assertEqual((progress.interval_days, progress.review_count, progress.streak), (1, 1, 1))
+
+        first = self.client.post(f'/api/answers/{self.latest_log().id}/undo')
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertTrue(first.data['deleted_progress'])
+        self.assertFalse(UserWordProgress.objects.filter(user=self.user, word=self.words[0]).exists())
+
+    def test_undo_rejects_expired_and_practice_answers(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        log = self.latest_log()
+        AnswerLog.objects.filter(id=log.id).update(created_at=timezone.now() - timedelta(minutes=30))
+        expired = self.client.post(f'/api/answers/{log.id}/undo')
+        self.assertEqual(expired.status_code, 400)
+        self.assertIn('10 分钟', expired.data['detail'])
+
+        self.answer(self.words[1], 'good')
+        practice = self.client.post(
+            f'/api/study/{self.words[1].id}/answer', {'rating': 'again', 'practice': True}, format='json',
+        )
+        response = self.client.post(f"/api/answers/{practice.data['answer_log_id']}/undo")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('练习', response.data['detail'])
+
+    def test_undo_rejects_non_latest_and_foreign_answers(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        first_log = self.latest_log()
+        self.answer(self.words[1], 'good')
+        stale = self.client.post(f'/api/answers/{first_log.id}/undo')
+        self.assertEqual(stale.status_code, 400)
+        self.assertEqual(stale.data['detail'], '只能撤销最近一次作答')
+
+        other = get_user_model().objects.create_user(username='intruder', password=PASSWORD)
+        other_client = APIClient()
+        other_client.post('/api/auth/login', {'username': 'intruder', 'password': PASSWORD}, format='json')
+        foreign = other_client.post(f'/api/answers/{self.latest_log().id}/undo')
+        self.assertEqual(foreign.status_code, 404)
+
+    def test_undo_rolls_back_statistics(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        stats = self.client.get(f'/api/statistics?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(stats['today_completed'], 1)
+        self.assertEqual(stats['today_new'], 1)
+
+        self.client.post(f'/api/answers/{self.latest_log().id}/undo')
+        stats = self.client.get(f'/api/statistics?dictionary_id={self.dictionary.id}').data
+        profile = self.client.get('/api/profile/summary?days=7').data
+        self.assertEqual(stats['today_completed'], 0)
+        self.assertEqual(stats['today_new'], 0)
+        self.assertEqual(profile['today']['answers'], 0)
+        self.assertEqual(profile['totals']['answers'], 0)
+
+
+class AnswerIdempotencyTests(ApiTestCase):
+    def post_answer(self, word, rating, token):
+        return self.client.post(
+            f'/api/study/{word.id}/answer',
+            {'rating': rating, 'client_token': token},
+            format='json',
+        )
+
+    def test_same_token_is_applied_once(self):
+        self.login()
+        self.enroll()
+        first = self.post_answer(self.words[0], 'good', 'token-1')
+        second = self.post_answer(self.words[0], 'good', 'token-1')
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertTrue(second.data['duplicate'])
+        self.assertEqual(second.data['answer_log_id'], first.data['answer_log_id'])
+        self.assertEqual(second.data['interval_days'], 1)
+        self.assertEqual(AnswerLog.objects.filter(user=self.user).count(), 1)
+        progress = UserWordProgress.objects.get(user=self.user, word=self.words[0])
+        self.assertEqual(progress.review_count, 1)
+
+    def test_token_is_single_use_across_words(self):
+        self.login()
+        self.enroll()
+        self.post_answer(self.words[0], 'good', 'shared')
+        response = self.post_answer(self.words[1], 'good', 'shared')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], '这个请求标识已经用于另一个单词')
+
+    def test_token_can_be_reused_after_undo(self):
+        self.login()
+        self.enroll()
+        first = self.post_answer(self.words[0], 'good', 'retry-me')
+        self.client.post(f"/api/answers/{first.data['answer_log_id']}/undo")
+        again = self.post_answer(self.words[0], 'good', 'retry-me')
+        self.assertEqual(again.status_code, 200, again.data)
+        self.assertFalse(again.data.get('duplicate', False))
+        self.assertEqual(AnswerLog.objects.filter(user=self.user).count(), 2)
+
+
+class StatisticsConsistencyTests(ApiTestCase):
+    def test_today_completed_matches_profile_answers(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        self.answer(self.words[1], 'again')
+        self.client.post(f'/api/study/{self.words[0].id}/answer', {'rating': 'good', 'practice': True}, format='json')
+
+        stats = self.client.get(f'/api/statistics?dictionary_id={self.dictionary.id}').data
+        profile = self.client.get('/api/profile/summary?days=7').data
+        self.assertEqual(stats['today_completed'], 2)
+        self.assertEqual(profile['today']['answers'], 3)
+        self.assertEqual(profile['today']['practice'], 1)
+        self.assertEqual(stats['wrong_words'], 1)
+

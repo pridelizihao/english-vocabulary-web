@@ -5,6 +5,7 @@ from .views import (
     DictionaryViewSet,
     answer_word,
     csrf,
+    dictionary_words,
     enroll_dictionary,
     import_dictionary,
     import_personal_dictionary,
@@ -17,6 +18,9 @@ from .views import (
     statistics,
     today_review,
     today_study,
+    undo_answer,
+    word_detail,
+    wrong_review,
 )
 
 router = DefaultRouter()
@@ -32,10 +36,14 @@ urlpatterns = [
     path('auth/me', me),
     path('dictionaries/import', import_personal_dictionary),
     path('dictionaries/<int:dictionary_id>/enroll', enroll_dictionary),
+    path('dictionaries/<int:dictionary_id>/words', dictionary_words),
+    path('words/<int:word_id>', word_detail),
+    path('answers/<int:log_id>/undo', undo_answer),
     path('admin/dictionaries/import', import_dictionary),
     path('study/today', today_study),
     path('review/today', today_review),
     path('review/early', early_review),
+    path('review/wrong', wrong_review),
     path('profile/summary', profile_summary),
     path('study/<int:word_id>/answer', answer_word),
     path('statistics', statistics),

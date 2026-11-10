@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { Rating } from '../api'
-import { englishVoice, onlineSpeechUrl } from '../lib/speech'
+import { useSpeech } from '../composables/useSpeech'
 import {
   RATINGS,
   RATING_META,
@@ -27,11 +27,13 @@ const props = defineProps<{
   newLearnedToday: number
   newLimit: number
   dueReviews: number
+  canUndo: boolean
 }>()
 
 const emit = defineEmits<{
   (event: 'rate', rating: Rating): void
   (event: 'back'): void
+  (event: 'undo'): void
   (event: 'update:mode', mode: 'card' | 'cloze'): void
 }>()
 
@@ -40,8 +42,7 @@ const answer = ref<string[]>([])
 const result = ref<'correct' | 'wrong' | null>(null)
 const shaking = ref(false)
 const attempts = ref(0)
-const speechMessage = ref('')
-const availableVoices = ref<SpeechSynthesisVoice[]>([])
+const { speak: speakWord, stop: stopSpeech, message: speechMessage } = useSpeech()
 const hintVisible = ref(false)
 const fullMeaningVisible = ref(false)
 const clozeBox = ref<HTMLElement | null>(null)
@@ -56,11 +57,10 @@ const shortMeaning = computed(() => primaryMeaning(word.value.meaning))
 const kindLabel = computed(() => ({ new: '新词', review: '复习', practice: '练习' }[props.item.kind]))
 const hasMoreMeaning = computed(() => shortMeaning.value !== word.value.meaning.trim())
 const progress = computed(() => (props.total ? Math.round((props.index / props.total) * 100) : 0))
-const speechAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window
-let player: HTMLAudioElement | null = null
+
 
 function reset() {
-  stopPlayback()
+  stopSpeech()
   revealed.value = false
   result.value = null
   shaking.value = false
@@ -184,95 +184,9 @@ function emitRate(rating: Rating) {
   emit('rate', rating)
 }
 
-// 朗读顺序：词典自带音频 → 系统英文语音 → 在线发音（有道）。
-async function speak() {
-  speechMessage.value = ''
-  stopPlayback()
-  const provided = word.value.audio_url || word.value.pronunciation_url
-  if (provided && (await playUrl(provided))) return
-  if (await speakLocally()) return
-  if (await playUrl(onlineSpeechUrl(word.value.spelling))) return
-  speechMessage.value = '朗读失败：浏览器没有放出声音（可能被拦截，或没有可用的英文语音）'
-}
-
-function stopPlayback() {
-  if (player) {
-    player.pause()
-    player.src = ''
-    player = null
-  }
-  if (speechAvailable) {
-    try {
-      window.speechSynthesis.cancel()
-    } catch {
-      // 浏览器可能禁用 speechSynthesis，忽略即可
-    }
-  }
-}
-
-function playUrl(url: string) {
-  return new Promise<boolean>((resolve) => {
-    try {
-      const audio = new Audio(url)
-      player = audio
-      let settled = false
-      let timer = 0
-      const finish = (ok: boolean) => {
-        if (settled) return
-        settled = true
-        window.clearTimeout(timer)
-        resolve(ok)
-      }
-      timer = window.setTimeout(() => finish(false), 6000)
-      audio.onerror = () => finish(false)
-      audio.play().then(() => finish(true)).catch(() => finish(false))
-    } catch {
-      resolve(false)
-    }
-  })
-}
-
-function speakLocally() {
-  return new Promise<boolean>((resolve) => {
-    if (!speechAvailable) {
-      resolve(false)
-      return
-    }
-    const voice = englishVoice(availableVoices.value)
-    // 没有英文语音时不硬试，直接走在线发音。
-    if (!voice) {
-      resolve(false)
-      return
-    }
-    const synth = window.speechSynthesis
-    const utterance = new SpeechSynthesisUtterance(word.value.spelling)
-    utterance.voice = voice
-    utterance.lang = voice.lang || 'en-US'
-    utterance.rate = 0.9
-    let settled = false
-    let timer = 0
-    const finish = (ok: boolean) => {
-      if (settled) return
-      settled = true
-      window.clearTimeout(timer)
-      if (!ok) {
-        try {
-          synth.cancel()
-        } catch {
-          // 已停止或浏览器不支持，忽略
-        }
-      }
-      resolve(ok)
-    }
-    timer = window.setTimeout(() => finish(false), 2500)
-    utterance.onstart = () => finish(true)
-    utterance.onerror = () => finish(false)
-    try {
-      synth.speak(utterance)
-    } catch {
-      finish(false)
-    }
-  })
+// 朗读顺序：词典自带音频 → 系统英文语音 → 在线发音（有道），见 useSpeech。
+function speak() {
+  speakWord(word.value.spelling, [word.value.audio_url, word.value.pronunciation_url])
 }
 
 function onWindowKeydown(event: KeyboardEvent) {
@@ -291,6 +205,11 @@ function onWindowKeydown(event: KeyboardEvent) {
       event.preventDefault()
       primaryAction()
     }
+    return
+  }
+  if (props.canUndo && (event.key === 'u' || event.key === 'U' || (event.ctrlKey && event.key === 'z'))) {
+    event.preventDefault()
+    emit('undo')
     return
   }
   // Let Enter/Space on a focused button behave like a normal click.
@@ -316,20 +235,12 @@ function onWindowKeydown(event: KeyboardEvent) {
   }
 }
 
-function refreshVoices() {
-  if (!speechAvailable) return
-  availableVoices.value = window.speechSynthesis.getVoices()
-}
-
 onMounted(() => {
   window.addEventListener('keydown', onWindowKeydown)
-  refreshVoices()
-  window.speechSynthesis?.addEventListener('voiceschanged', refreshVoices)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onWindowKeydown)
-  window.speechSynthesis?.removeEventListener('voiceschanged', refreshVoices)
-  stopPlayback()
+  stopSpeech()
 })
 </script>
 
@@ -361,6 +272,9 @@ onBeforeUnmount(() => {
             填空
           </button>
         </div>
+        <button v-if="canUndo" class="link-button undo-button" :disabled="loading" @click="emit('undo')">
+          撤销上一题 <kbd>U</kbd>
+        </button>
         <span class="counter">{{ index + 1 }} / {{ total }}</span>
       </div>
     </div>
@@ -480,10 +394,10 @@ onBeforeUnmount(() => {
     </section>
 
     <p v-if="mode === 'card'" class="keyboard-hint muted">
-      快捷键：<kbd>空格</kbd> 看答案 · <kbd>1</kbd>–<kbd>4</kbd> 评分 · <kbd>回车</kbd> 确认
+      快捷键：<kbd>空格</kbd> 看答案 · <kbd>1</kbd>–<kbd>4</kbd> 评分 · <kbd>U</kbd> 撤销 · <kbd>回车</kbd> 确认
     </p>
     <p v-else class="keyboard-hint muted">
-      快捷键：<kbd>回车</kbd> 检查 · <kbd>Esc</kbd> 看答案 · <kbd>Backspace</kbd> 回退
+      快捷键：<kbd>回车</kbd> 检查 · <kbd>Esc</kbd> 看答案 · <kbd>Backspace</kbd> 回退 · <kbd>U</kbd> 撤销
     </p>
   </section>
 </template>

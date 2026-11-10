@@ -26,6 +26,8 @@ MAX_EASE = 3.2
 MASTERED_INTERVAL_DAYS = 21
 AGAIN_DELAY = timedelta(minutes=10)
 MAX_INTERVAL_DAYS = 365
+# An answer can be undone only within this window (see views.undo_answer).
+UNDO_WINDOW_MINUTES = 10
 RATINGS = ('again', 'hard', 'good', 'easy')
 WORD_FIELDS = ('spelling', 'phonetic', 'part_of_speech', 'meaning', 'example', 'example_translation', 'audio_url')
 

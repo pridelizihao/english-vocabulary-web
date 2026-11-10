@@ -20,15 +20,17 @@ backend/                       Django 项目
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
     management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples
-    tests.py                   后端用例（当前 31 个）
+    tests.py                   后端用例（当前 51 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
   src/lib/study.ts             纯函数：填空遮罩、队列、格式化（node 可直接测）
   src/lib/profile.ts           学习面板的纯函数（热力图分档、按周分列）
-  src/lib/router.ts            hash 路由：/ · /auth · /profile · /study/:id · /done/:id
+  src/lib/words.ts             词表浏览的纯函数（查询串、分页、幂等 token、时间格式）
+  src/lib/router.ts            hash 路由：/ · /auth · /words/:id · /words/:id/:wordId · /profile · /study/:id · /done/:id
   src/composables/useSession.ts 全局学习会话状态与动作
-  src/views/*.vue              Auth / Dictionaries / Study / Done / Profile
+  src/composables/useSpeech.ts  朗读链路（词典音频 → 本地英文语音 → 有道兜底）
+  src/views/*.vue              Auth / Dictionaries / Words / WordDetail / Study / Done / Profile
   src/App.vue                  壳层 + 路由同步 + 错误/提示条
   tests/*.test.mjs             node:test，纯逻辑
 data/
@@ -85,6 +87,10 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - **额外新词**：每日基础 20 个，用户可主动要「再来 20 个」，每天额外上限 `EXTRA_NEW_LIMIT = 60`；额外新词在 `AnswerLog.is_extra` 里标记。
 - **练习**：`practice: true` 的作答只写 `AnswerLog`，绝不改动 `UserWordProgress`（间隔、streak 都不变）。
 - **答题流水**：每次作答写一条 `AnswerLog`（新词/额外/练习/间隔前后），个人面板和后续统计都基于它。
+- **撤销**：只能撤销**最近一条未撤销**的作答，且必须在 10 分钟内；`AnswerLog.state_before` 保存作答前的进度快照，撤销时按快照恢复（新词直接删进度行）；撤销后清空 `client_token`，允许用同一个请求标识重新作答。
+- **幂等**：作答可带 `client_token`（前端每次作答生成），同一用户同一 token 只落一条流水，重复请求返回 `duplicate: true` 且不再推进间隔。
+- **统计口径**：`statistics.today_completed` = 今日**非练习**答题条数；所有统计（个人面板、额外新词用量、答题历史）都必须排除 `undone_at` 非空的记录。
+- **错词**：`wrong_count > 0` 即错词；错词练习走 `practice` 通道，只记录不改间隔。
 - **个人词典**：`Dictionary.owner` 非空即个人词典；列表/详情/enroll/统计/答题共用同一可见性判断（官方 + 自己的）。
 - **单词唯一**：`(dictionary, Lower(spelling))`，`Abandon` 与 `abandon` 是同一个词，导入时合并。
 - **例句**：`Word.example` 是英文例句，`Word.example_translation` 是中文翻译；批量填充只走 `enrich_examples`（数据源 `data/examples.json`），不要在教学流程里现生成。
@@ -106,6 +112,8 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 | GET | `/api/auth/me` | 当前用户，未登录 401 |
 | GET | `/api/dictionaries/` | 可见词典 + 当前用户的 learned/due 计数 |
 | GET | `/api/dictionaries/{id}/` | 词典详情 |
+| GET | `/api/dictionaries/{id}/words?q=&filter=&sort=&page=&page_size=` | 词表分页/搜索（filter: all/new/learning/mastered/due/wrong） |
+| GET | `/api/words/{word_id}` | 单词详情：preview + progress + 最近 10 条答题记录 |
 | DELETE | `/api/dictionaries/{id}/` | 删除自己的词典（staff 可删官方） |
 | POST | `/api/dictionaries/{id}/enroll` | 开始学习（幂等） |
 | POST | `/api/dictionaries/import` | 导入个人词典（同名幂等，仅自己可见） |
@@ -113,7 +121,9 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 | GET | `/api/study/today?dictionary_id=&order=alpha\|random` | 今日新词（受预算限制） |
 | GET | `/api/review/today?dictionary_id=` | 到期复习 |
 | GET | `/api/review/early?dictionary_id=&order=weak\|due\|random&limit=` | 提前复习（练习，不改 SRS） |
-| POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?}`，practice 只记录不改间隔 |
+| GET | `/api/review/wrong?dictionary_id=&limit=&order=wrong\|recent` | 错词列表（练习用） |
+| POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?, client_token?}`，practice 只记录不改间隔 |
+| POST | `/api/answers/{log_id}/undo` | 撤销最近一次作答（10 分钟内） |
 | GET | `/api/profile/summary?days=371` | 个人学习面板：每日/连续天数/按词典（days 支持 7–371） |
 | GET | `/api/statistics?dictionary_id=` | 进度、掌握数、待复习、下次复习时间 |
 
@@ -122,7 +132,9 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 组件里不直接 `fetch`，一律走 `src/api.ts`；请求超时、401 跳登录、中文兜底都在那一层。
 - 纯逻辑放 `src/lib/`，并在 `frontend/tests/` 里用 node 直接测（不引 Vue、不引 DOM）。
 - 视图只管展示；共享状态和异步动作放 `useSession()`。新增视图先加路由解析 `lib/router.ts`。
-- 快捷键是产品的一部分：`空格` 看答案、`1`–`4` 评分、`回车` 确认。改交互时别弄丢。
+- 快捷键是产品的一部分：`空格` 看答案、`1`–`4` 评分、`回车` 确认、`U` 撤销（仅在有可撤销作答时）。改交互时别弄丢。
+- 词表页的筛选状态放在 URL（`?q=&filter=&sort=&page=`）：`lib/words.ts` 的 `buildWordsQuery / clampPage` 是唯一实现，`browseMemory` 记住每本词典的查询串，详情页据此返回。
+- 朗读统一走 `useSpeech()`，不要在视图里重写播放/降级链（音频 → 本地英文语音 → 有道）。
 - 填空模式的遮罩与判分必须共用 `lib/study.ts` 的 `clozeSlots / buildClozeAnswer / checkCloze`，不要在组件和模板里各算一套（历史 bug 就是这么来的）。
 - 长单词必须可换行：`h3` 用 `clamp()`，`overflow-wrap: anywhere`，填空行 `flex-wrap: wrap`。
 - 热力图的格子边长由 `ProfileView` 的 `measureHeatmap()` 按容器宽度算（`--heat-cell` / `--heat-gap`），显示周数也随宽度在 13–53 周之间自适应；不要写死像素或加横向滚动容器，格子必须保持正方形。
@@ -130,8 +142,8 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 31 个）。
-- 改填空/SRS/热力图/朗读 → 改 `frontend/tests/*.test.mjs`（当前 27 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 51 个）。
+- 改填空/SRS/热力图/朗读/词表 → 改 `frontend/tests/*.test.mjs`（当前 34 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
 
@@ -139,7 +151,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 
 - 例句与中文翻译来自 `data/examples.json`（项目生成，非第三方词典语料）；要换成授权语料，按同格式替换后跑 `enrich_examples --force` 与 `build_wordlists.py`。
 - 释义仍是 ECDICT 原始多义项文本，卡片/填空只显示 `primaryMeaning()` 截出的主释义，完整内容可展开。
-- 没有「撤销上一题」和错词本；`wrong_count` 在攒但没有入口。
+- 没有「导出/分享」；撤销只覆盖 10 分钟内的最近一次作答，不做任意历史回滚。
 - Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**；生产走的是原生部署（nginx + gunicorn + systemd），步骤见 `docs/deploy.md`，已在 Ubuntu 24.04 上跑通。
 - 单词发音顺序是「词典自带 `audio_url` → 系统英文语音（Web Speech API）→ 有道在线发音」，卡片和填空都有「🔊 朗读」按钮；在线发音会把单词发到 `dict.youdao.com`，没有英文语音包时靠它兜底。
 - 词表来源见 `data/sources/README.md`，商用前需确认上游授权。
@@ -153,3 +165,6 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 前端 hash 路由刷新会重新拉取学习队列（服务端进度已保存，不会丢数据）。
 - `localStorage` / `speechSynthesis` 可能被浏览器禁用，相关调用都已包 `try/catch`，不要改成裸调用。
 - 导入文件会整块读进内存，单文件上限 10 MB、单次 20000 行；要放宽先改 `services.py` 的常量并补测试。
+- `crypto.randomUUID()` 只在安全上下文可用，公网 HTTP 下是 `undefined`；幂等 token 必须用 `crypto.getRandomValues`（`lib/words.ts` 的 `randomToken()`）。
+- 开发时 `npm run dev` 的 watcher 会占用 `frontend/src` 文件句柄（Windows 上表现为 `ReplaceFileW EIO`），改不动文件时先停掉 dev server，或改用写回整文件的方式。
+- 词表接口的 6 个 `counts` 是 6 次 count 查询；词表到十万级再合并成单次聚合。

@@ -18,6 +18,47 @@ class WordSerializer(serializers.ModelSerializer):
         ]
 
 
+class WordListSerializer(serializers.ModelSerializer):
+    """Compact row for the dictionary browser (progress is flattened)."""
+
+    status = serializers.SerializerMethodField()
+    interval_days = serializers.SerializerMethodField()
+    next_review_at = serializers.SerializerMethodField()
+    wrong_count = serializers.SerializerMethodField()
+    streak = serializers.SerializerMethodField()
+
+    def _progress(self, obj):
+        return (self.context.get('progress_map') or {}).get(obj.id)
+
+    def get_status(self, obj):
+        progress = self._progress(obj)
+        return progress.status if progress else 'new'
+
+    def get_interval_days(self, obj):
+        progress = self._progress(obj)
+        return progress.interval_days if progress else 0
+
+    def get_next_review_at(self, obj):
+        progress = self._progress(obj)
+        return progress.next_review_at if progress else None
+
+    def get_wrong_count(self, obj):
+        progress = self._progress(obj)
+        return progress.wrong_count if progress else 0
+
+    def get_streak(self, obj):
+        progress = self._progress(obj)
+        return progress.streak if progress else 0
+
+    class Meta:
+        model = Word
+        fields = [
+            'id', 'spelling', 'phonetic', 'part_of_speech', 'meaning',
+            'status', 'interval_days', 'next_review_at', 'wrong_count', 'streak',
+        ]
+
+
+
 class DictionarySerializer(serializers.ModelSerializer):
     word_count = serializers.SerializerMethodField()
     learned_words = serializers.SerializerMethodField()

@@ -2,6 +2,9 @@ const API_BASE = '/api'
 
 export type Rating = 'again' | 'hard' | 'good' | 'easy'
 export type RatingPreview = Record<Rating, string>
+export type WordFilter = 'all' | 'new' | 'learning' | 'mastered' | 'due' | 'wrong'
+export type WordSort = 'alpha' | 'recent' | 'due' | 'wrong'
+export type ProgressStatus = 'new' | 'learning' | 'mastered'
 
 export type User = { id: number; username: string; is_staff: boolean }
 
@@ -54,6 +57,8 @@ export type AnswerResult = Progress & {
   practice?: boolean
   is_new?: boolean
   is_extra?: boolean
+  answer_log_id?: number
+  duplicate?: boolean
 }
 
 export type StudyToday = {
@@ -86,6 +91,7 @@ export type ProfileDictionary = {
   learned: number
   mastered: number
   due: number
+  wrong: number
 }
 
 export type ProfileSummary = {
@@ -109,8 +115,52 @@ export type Statistics = {
   remaining_new: number
   progress_percent: number
   next_review_at: string | null
+  wrong_words: number
   extra_used_today: number
   extra_limit: number
+}
+
+export type WordListRow = {
+  id: number
+  spelling: string
+  phonetic: string
+  part_of_speech: string
+  meaning: string
+  status: ProgressStatus
+  interval_days: number
+  next_review_at: string | null
+  wrong_count: number
+  streak: number
+}
+
+export type WordList = {
+  dictionary: { id: number; name: string; word_count: number }
+  enrolled: boolean
+  filter: WordFilter
+  sort: WordSort
+  query: string
+  counts: Record<WordFilter, number>
+  total: number
+  page: number
+  page_size: number
+  pages: number
+  results: WordListRow[]
+}
+
+export type AnswerHistoryEntry = {
+  id: number
+  rating: Rating
+  rating_label: string
+  created_at: string
+  interval_before: number
+  interval_after: number
+  is_practice: boolean
+}
+
+export type WordDetail = Word & {
+  dictionary: { id: number; name: string }
+  progress: Progress | null
+  history: AnswerHistoryEntry[]
 }
 
 export type ImportSummary = {
@@ -266,11 +316,19 @@ export async function reviewToday(dictionaryId: number, order: 'alpha' | 'random
   return request<ReviewToday>(`/review/today?dictionary_id=${dictionaryId}&order=${order}`)
 }
 
-export async function answer(wordId: number, rating: Rating, options: { practice?: boolean } = {}) {
+export async function answer(
+  wordId: number,
+  rating: Rating,
+  options: { practice?: boolean; clientToken?: string } = {},
+) {
   await ensureCsrf()
   return request<AnswerResult>(`/study/${wordId}/answer`, {
     method: 'POST',
-    body: JSON.stringify({ rating, practice: Boolean(options.practice) }),
+    body: JSON.stringify({
+      rating,
+      practice: Boolean(options.practice),
+      ...(options.clientToken ? { client_token: options.clientToken } : {}),
+    }),
     headers: csrfHeaders(),
   })
 }
@@ -287,6 +345,27 @@ export async function profileSummary(days = 30) {
 
 export async function statistics(dictionaryId: number) {
   return request<Statistics>(`/statistics?dictionary_id=${dictionaryId}`)
+}
+
+export async function dictionaryWords(dictionaryId: number, query: string) {
+  const suffix = query ? `?${query}` : ''
+  return request<WordList>(`/dictionaries/${dictionaryId}/words${suffix}`)
+}
+
+export async function wordDetail(wordId: number) {
+  return request<WordDetail>(`/words/${wordId}`)
+}
+
+export async function wrongWords(dictionaryId: number, limit = 20) {
+  return request<ReviewToday>(`/review/wrong?dictionary_id=${dictionaryId}&limit=${limit}`)
+}
+
+export async function undoAnswer(answerLogId: number) {
+  await ensureCsrf()
+  return request<{ detail: string; word_id: number; deleted_progress: boolean }>(
+    `/answers/${answerLogId}/undo`,
+    { method: 'POST', headers: csrfHeaders() },
+  )
 }
 
 export async function importPersonalDictionary(name: string, file: File) {

@@ -121,6 +121,13 @@ class AnswerLog(models.Model):
     is_practice = models.BooleanField(default=False)
     interval_before = models.PositiveIntegerField(default=0)
     interval_after = models.PositiveIntegerField(default=0)
+    # Snapshot of the progress row *before* this answer, so the answer can be
+    # undone without recomputing the scheduler backwards. Empty for practice
+    # answers (they never touch the schedule).
+    state_before = models.JSONField(default=dict, blank=True)
+    undone_at = models.DateTimeField(null=True, blank=True)
+    # Client generated idempotency key; at most one log per user and token.
+    client_token = models.CharField(max_length=64, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -128,6 +135,13 @@ class AnswerLog(models.Model):
         indexes = [
             models.Index(fields=['user', 'created_at'], name='answerlog_user_time_idx'),
             models.Index(fields=['user', 'dictionary'], name='answerlog_user_dict_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'client_token'],
+                condition=~models.Q(client_token=''),
+                name='answerlog_user_token_uniq',
+            ),
         ]
 
     def __str__(self):

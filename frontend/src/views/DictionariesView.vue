@@ -127,6 +127,7 @@ function downloadTemplate() {
         <div class="card-footer">
           <span v-if="dictionary.due_reviews" class="due-badge">{{ dictionary.due_reviews }} 个待复习</span>
           <span v-else class="muted">暂无到期复习</span>
+          <a class="link-button" :href="`#/words/${dictionary.id}`">查看词表</a>
           <template v-if="dictionary.is_owned">
             <template v-if="confirmingId === dictionary.id">
               <span class="muted">确认删除？</span>

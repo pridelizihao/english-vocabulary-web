@@ -69,6 +69,19 @@ systemctl reload nginx
 ## 更新一版
 
 ```bash
+# 0. 迁移前先备份生产库（有数据之后每次更新都建议做）
+mkdir -p /var/backups/english-vocabulary
+/opt/english-vocabulary/venv/bin/python - <<'PY'
+import datetime, sqlite3
+target = f"/var/backups/english-vocabulary/before-update-{datetime.datetime.now():%Y%m%d-%H%M%S}.sqlite3"
+source = sqlite3.connect('/var/lib/english-vocabulary/db.sqlite3')
+sink = sqlite3.connect(target)
+source.backup(sink)
+sink.close()
+source.close()
+print(target)
+PY
+
 # 本地重新构建前端并打包（同上），scp 到 /tmp/ev.tar.gz 后：
 tar -xzf /tmp/ev.tar.gz -C /opt/english-vocabulary
 rm -rf /var/www/english-vocabulary/*

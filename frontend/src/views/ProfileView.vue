@@ -6,7 +6,7 @@ import { useSession } from '../composables/useSession'
 import { buildHeatmap, dayLabel, heatLevel, recentDays, WEEKDAY_LABELS } from '../lib/profile'
 import { navigate } from '../lib/router'
 
-const { profile, loading, user, startReview } = useSession()
+const { profile, loading, user, startReview, startWrong } = useSession()
 
 const days = computed(() => profile.value?.daily ?? [])
 const heatWrap = ref<HTMLElement | null>(null)
@@ -195,9 +195,14 @@ function review(item: ProfileDictionary) {
               <strong>{{ item.name }}</strong>
               <p class="muted">{{ item.learned }} 已学 · {{ item.mastered }} 掌握 · {{ item.due }} 待复习</p>
             </div>
-            <button :disabled="loading || item.learned === 0" @click="review(item)">
-              {{ item.due > 0 ? `复习 ${item.due} 个` : '提前复习' }}
-            </button>
+            <div class="profile-dictionary-actions">
+              <button :disabled="loading || item.learned === 0" @click="review(item)">
+                {{ item.due > 0 ? `复习 ${item.due} 个` : '提前复习' }}
+              </button>
+              <button v-if="item.wrong > 0" :disabled="loading" @click="startWrong(item.id)">
+                练错词 {{ item.wrong }} 个
+              </button>
+            </div>
           </div>
           <p v-if="!profile.dictionaries.length" class="muted">还没有学习记录，先去背几个词吧。</p>
         </div>
