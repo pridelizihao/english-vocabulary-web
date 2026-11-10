@@ -1,44 +1,162 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import * as api from './api'
+import { computed, onMounted, watch } from 'vue'
 
-type View = 'auth' | 'dictionaries' | 'study' | 'done'
-type Mode = 'card' | 'cloze'
-const view = ref<View>('auth'); const mode = ref<Mode>('card'); const isRegister = ref(false)
-const username = ref(''); const password = ref(''); const user = ref<api.User | null>(null)
-const dictionaryList = ref<api.Dictionary[]>([]); const selectedDictionary = ref<api.Dictionary | null>(null)
-const queue = ref<api.Word[]>([]); const index = ref(0); const revealed = ref(false); const completed = ref(0)
-const clozeAnswer = ref<string[]>([]); const clozeResult = ref<'correct' | 'wrong' | null>(null); const order = ref<'alpha' | 'random'>('alpha')
-const importFile = ref<File | null>(null); const importDictionaryId = ref<number | null>(null); const importName = ref('我的自定义词典'); const importMessage = ref('')
-const loading = ref(false); const errorMessage = ref('')
-const stats = ref<{ learned_words: number; mastered_words: number; due_reviews: number; progress_percent: number } | null>(null)
-const currentWord = computed(() => queue.value[index.value]); const totalTasks = computed(() => queue.value.length)
-const revealCount = computed(() => currentWord.value ? Math.max(1, Math.floor(currentWord.value.spelling.length / 3)) : 0)
-function setError(error: unknown) { errorMessage.value = error instanceof Error ? error.message : '操作失败，请稍后重试' }
-async function submitAuth() { loading.value = true; errorMessage.value = ''; try { const result = isRegister.value ? await api.register(username.value, password.value) : await api.login(username.value, password.value); user.value = result.user; await loadDictionaries() } catch (error) { setError(error) } finally { loading.value = false } }
-async function loadDictionaries() { dictionaryList.value = await api.dictionaries(); view.value = 'dictionaries' }
-async function selectDictionary(dictionary: api.Dictionary) { loading.value = true; errorMessage.value = ''; selectedDictionary.value = dictionary; try { await api.enroll(dictionary.id); const [study, review, currentStats] = await Promise.all([api.studyToday(dictionary.id, order.value), api.reviewToday(dictionary.id, order.value), api.statistics(dictionary.id)]); queue.value = [...review.words.map((item) => item.word), ...study.words]; index.value = 0; completed.value = 0; resetCloze(); stats.value = currentStats; view.value = queue.value.length ? 'study' : 'done' } catch (error) { setError(error) } finally { loading.value = false } }
-function resetCloze() { clozeAnswer.value = currentWord.value ? currentWord.value.spelling.split('').map((char, i) => i < Math.max(1, Math.floor(char.length / 3)) ? char : '') : []; clozeResult.value = null }
-async function finishWord(rating: string) { if (!currentWord.value || !selectedDictionary.value) return; loading.value = true; errorMessage.value = ''; try { await api.answer(currentWord.value.id, rating); completed.value += 1; revealed.value = false; if (index.value + 1 >= queue.value.length) { stats.value = await api.statistics(selectedDictionary.value.id); view.value = 'done' } else { index.value += 1; resetCloze() } } catch (error) { setError(error) } finally { loading.value = false } }
-function submitCloze() { if (!currentWord.value || clozeAnswer.value.some((char) => !char.trim())) return; const correct = clozeAnswer.value.join('').toLowerCase() === currentWord.value.spelling.toLowerCase(); clozeResult.value = correct ? 'correct' : 'wrong' }
-async function continueCloze() { await finishWord(clozeResult.value === 'correct' ? 'good' : 'again') }
-function setImportFile(event: Event) { importFile.value = (event.target as HTMLInputElement).files?.[0] ?? null }
-async function uploadDictionary() { if (!importFile.value || !importDictionaryId.value) return; loading.value = true; importMessage.value = ''; try { const result = await api.importDictionary(importDictionaryId.value, importFile.value) as { created: number; updated: number; skipped: number }; importMessage.value = `导入完成：新增 ${result.created}，更新 ${result.updated}，跳过 ${result.skipped}`; await loadDictionaries() } catch (error) { setError(error) } finally { loading.value = false } }
-async function uploadPersonalDictionary() { if (!importFile.value) return; loading.value = true; importMessage.value = ''; try { const result = await api.importPersonalDictionary(importName.value, importFile.value); importMessage.value = `已创建「${result.name}」，导入 ${result.created} 个单词`; await loadDictionaries() } catch (error) { setError(error) } finally { loading.value = false } }
-async function signOut() { await api.logout().catch(() => undefined); user.value = null; selectedDictionary.value = null; queue.value = []; view.value = 'auth' }
-onMounted(async () => { try { const result = await api.me(); user.value = result.user; await loadDictionaries() } catch { view.value = 'auth' } })
+import { useSession } from './composables/useSession'
+import { emptyReason } from './lib/study'
+import { navigate, route } from './lib/router'
+import AuthView from './views/AuthView.vue'
+import DictionariesView from './views/DictionariesView.vue'
+import DoneView from './views/DoneView.vue'
+import StudyView from './views/StudyView.vue'
+
+const {
+  user,
+  dictionaries,
+  activeDictionary,
+  currentItem,
+  index,
+  total,
+  completed,
+  stats,
+  loading,
+  error,
+  notice,
+  emptyState,
+  mode,
+  bootstrapped,
+  bootstrap,
+  signOut,
+  startStudy,
+  rate,
+  loadDone,
+  loadDictionaries,
+  clearError,
+  reportError,
+} = useSession()
+
+const reason = computed(() => {
+  if (emptyState.value) return emptyState.value
+  if (!stats.value) return null
+  return emptyReason({
+    total_words: stats.value.total_words,
+    remaining_new: stats.value.remaining_new,
+    today_new: stats.value.today_new,
+    new_limit: stats.value.new_limit,
+  })
+})
+
+async function syncRoute() {
+  const current = route.value
+  if (!bootstrapped.value) await bootstrap()
+  if (current.name === 'auth') {
+    if (user.value) navigate('/')
+    return
+  }
+  if (!user.value) {
+    navigate('/auth')
+    return
+  }
+  if (current.name === 'dictionaries') {
+    if (!dictionaries.value.length) {
+      try {
+        await loadDictionaries()
+      } catch (cause) {
+        reportError(cause)
+      }
+    }
+  } else if (current.name === 'study') {
+    if (activeDictionary.value?.id !== current.dictionaryId || !currentItem.value) {
+      await startStudy(current.dictionaryId)
+    }
+  } else if (current.name === 'done') {
+    if (!stats.value || activeDictionary.value?.id !== current.dictionaryId) {
+      await loadDone(current.dictionaryId)
+    }
+  }
+}
+
+onMounted(syncRoute)
+watch(route, syncRoute)
+
+watch(notice, (value) => {
+  if (!value) return
+  window.setTimeout(() => {
+    if (notice.value === value) notice.value = ''
+  }, 2600)
+})
+
+function goDictionaries() {
+  navigate('/')
+}
+
+function handleMode(value: 'card' | 'cloze') {
+  mode.value = value
+}
+
+function onRestart() {
+  const current = route.value
+  const dictionaryId = current.name === 'study' || current.name === 'done'
+    ? current.dictionaryId
+    : activeDictionary.value?.id
+  if (dictionaryId) startStudy(dictionaryId)
+}
 </script>
 
 <template>
   <main class="page">
-    <header><div><p class="eyebrow">WORD MEMORY</p><h1>英语单词背诵</h1></div><div v-if="user" class="user-bar"><span>{{ user.username }}</span><button class="link-button" @click="signOut">退出</button></div></header>
-    <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
-    <section v-if="view === 'auth'" class="panel auth-panel"><p class="eyebrow">开始学习</p><h2>{{ isRegister ? '创建学习账号' : '欢迎回来' }}</h2><form @submit.prevent="submitAuth"><label>用户名<input v-model="username" required autocomplete="username" /></label><label>密码<input v-model="password" type="password" minlength="6" required autocomplete="current-password" /></label><button class="primary wide" :disabled="loading">{{ loading ? '处理中…' : (isRegister ? '注册并开始' : '登录') }}</button></form><button class="link-button switch" @click="isRegister = !isRegister">{{ isRegister ? '已有账号？登录' : '还没有账号？注册' }}</button></section>
-    <section v-else-if="view === 'dictionaries'" class="content-section"><div class="hero"><p class="eyebrow">选择词典</p><h2>今天想学习哪本词典？</h2><p>已经掌握并未到复习时间的单词会自动跳过，到期后才会回来。</p><div class="order-switch"><span>出题顺序</span><button :class="{ active: order === 'alpha' }" @click="order = 'alpha'">字母顺序</button><button :class="{ active: order === 'random' }" @click="order = 'random'">乱序</button></div></div><div class="dictionary-grid"><button v-for="dictionary in dictionaryList" :key="dictionary.id" class="dictionary-card" :disabled="loading" @click="selectDictionary(dictionary)"><span class="tag">{{ dictionary.level || '英语词汇' }}</span><strong>{{ dictionary.name }}</strong><span>{{ dictionary.word_count }} 个单词 · {{ dictionary.description || '开始建立你的词汇量' }}</span></button></div><div class="import-box"><strong>导入自定义词典</strong><p>支持 CSV、JSON、XLSX，字段至少包含 word 和 meaning。导入后只会创建你的个人词典。</p><input v-model="importName" placeholder="词典名称" /><input type="file" accept=".csv,.json,.xlsx,.xlsm" @change="setImportFile" /><button class="primary" :disabled="loading || !importFile" @click="uploadPersonalDictionary">创建并导入</button><span v-if="importMessage" class="success">{{ importMessage }}</span></div><p v-if="!dictionaryList.length" class="empty">暂无已发布词典，请先导入并发布词库。</p></section>
-    <section v-else-if="view === 'study'" class="content-section"><div class="study-heading"><div><p class="eyebrow">{{ selectedDictionary?.name }} · 今日任务</p><h2>把单词变成长期记忆</h2></div><div class="study-tools"><div class="mode-switch"><button :class="{ active: mode === 'card' }" @click="mode = 'card'">卡片</button><button :class="{ active: mode === 'cloze' }" @click="mode = 'cloze'">填空</button></div><span class="counter">{{ index + 1 }} / {{ totalTasks }}</span></div></div>
-      <section class="card" v-if="currentWord && mode === 'card'"><h3>{{ currentWord.spelling }}</h3><p class="phonetic">{{ currentWord.phonetic || '暂无音标' }}</p><button v-if="!revealed" class="primary" @click="revealed = true">显示答案</button><div v-else class="answer"><strong>{{ currentWord.meaning }}</strong><p>{{ currentWord.example || '暂无例句' }}</p><div class="ratings"><button :disabled="loading" @click="finishWord('again')">忘记了</button><button :disabled="loading" @click="finishWord('hard')">模糊</button><button :disabled="loading" @click="finishWord('good')">记住了</button><button class="primary" :disabled="loading" @click="finishWord('easy')">很熟</button></div></div></section>
-      <section class="card cloze-card" v-if="currentWord && mode === 'cloze'"><p class="cloze-label">根据中文提示，在单词原位补全</p><div class="cloze-word" :class="{ shake: clozeResult === 'wrong' }"><template v-for="(char, charIndex) in currentWord.spelling" :key="charIndex"><span v-if="charIndex < revealCount">{{ char }}</span><input v-else v-model="clozeAnswer[charIndex]" maxlength="1" @input="clozeResult = null" @keyup.enter="submitCloze" /></template></div><p class="meaning-hint">{{ currentWord.meaning }}</p><button v-if="!clozeResult" class="primary" :disabled="clozeAnswer.some((char) => !char.trim())" @click="submitCloze">检查答案</button><div v-else class="cloze-result"><strong :class="clozeResult">{{ clozeResult === 'correct' ? '回答正确' : `再试一次，正确答案：${currentWord.spelling}` }}</strong><p>{{ clozeResult === 'wrong' ? '输入错误，请修改空格中的字母。' : '继续保持，完成下一题。' }}</p><button class="primary" @click="clozeResult === 'wrong' ? clozeResult = null : continueCloze()">{{ clozeResult === 'wrong' ? '重新检查' : '继续' }}</button></div></section>
+    <header class="app-header">
+      <a class="brand" href="#/" @click.prevent="goDictionaries">
+        <span class="brand-mark">W</span>
+        <span class="brand-text">
+          <strong>英语单词背诵</strong>
+          <small>间隔重复 · 每天二十个</small>
+        </span>
+      </a>
+      <div v-if="user" class="user-bar">
+        <span class="muted">{{ user.username }}</span>
+        <button class="link-button" @click="signOut">退出</button>
+      </div>
+    </header>
+
+    <p v-if="error" class="error banner" role="alert">
+      <span>{{ error }}</span>
+      <button class="dismiss" aria-label="关闭提示" @click="clearError">×</button>
+    </p>
+    <p v-if="notice" class="toast" role="status">{{ notice }}</p>
+
+    <AuthView v-if="route.name === 'auth'" />
+
+    <DictionariesView v-else-if="route.name === 'dictionaries'" />
+
+    <StudyView
+      v-else-if="route.name === 'study' && currentItem"
+      :item="currentItem"
+      :index="index"
+      :total="total"
+      :mode="mode"
+      :loading="loading"
+      :dictionary-name="activeDictionary?.name ?? ''"
+      :new-learned-today="stats?.today_new ?? 0"
+      :new-limit="stats?.new_limit ?? 20"
+      :due-reviews="stats?.due_reviews ?? 0"
+      @rate="rate"
+      @back="goDictionaries"
+      @update:mode="handleMode"
+    />
+
+    <DoneView
+      v-else-if="route.name === 'done'"
+      :stats="stats"
+      :dictionary-name="activeDictionary?.name ?? ''"
+      :completed="completed"
+      :reason="reason"
+      :loading="loading"
+      @restart="onRestart"
+      @back="goDictionaries"
+    />
+
+    <section v-else class="panel loading-panel" aria-busy="true">
+      <p class="muted">正在载入学习进度…</p>
     </section>
-    <section v-else class="panel done-panel"><p class="eyebrow">任务完成</p><h2>今天的学习完成了</h2><p>本次完成 {{ completed }} 个单词。</p><div v-if="stats" class="stats"><div><strong>{{ stats.progress_percent }}%</strong><span>词典进度</span></div><div><strong>{{ stats.mastered_words }}</strong><span>已掌握</span></div><div><strong>{{ stats.due_reviews }}</strong><span>待复习</span></div></div><button class="primary" @click="view = 'dictionaries'">选择其他词典</button></section>
   </main>
 </template>
