@@ -1,0 +1,15 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      DJANGO_DEBUG: "0"
+      DJANGO_SECRET_KEY: change-this-in-production
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
