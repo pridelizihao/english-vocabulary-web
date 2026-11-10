@@ -51,7 +51,7 @@ npm run dev
 ## 测试
 
 ```bash
-cd backend && ../.venv/Scripts/python.exe manage.py test   # 19 个用例
+cd backend && ../.venv/Scripts/python.exe manage.py test   # 24 个用例
 cd frontend
 npm run typecheck   # tsc --noEmit
 npm run test        # 纯逻辑测试（node:test）
@@ -68,10 +68,23 @@ curl -X POST http://127.0.0.1:8000/api/dictionaries/import \
   -F "name=我的词表" -F "file=@data/samples/words.csv"
 ```
 
-字段至少包含 `word` 和 `meaning`，可选 `phonetic / part_of_speech / example / audio_url`。
+字段至少包含 `word` 和 `meaning`，可选 `phonetic / part_of_speech / example / example_translation / audio_url`。
 支持 UTF-8 与 GBK 编码的 CSV、JSON 数组、XLSX；同一个词（忽略大小写）只会保留一条。
 
 官方词典的导入（需要 staff 账号）用 `python manage.py import_dictionary --dictionary "词典名" --file data/imports/xxx.csv --publish`。
+
+## 例句
+
+`data/examples.json` 存着每个词的例句和中文翻译（约 5000 条），卡片作答后会显示，填空模式里有「例句提示」（目标词会先遮住）。
+
+```bash
+# 换了词表或想覆盖已有例句时
+python manage.py enrich_examples              # 只补空的
+python manage.py enrich_examples --force      # 覆盖全部
+python data/scripts/build_wordlists.py        # 把例句写回可导入的 CSV
+```
+
+例句由项目生成（短句、贴合释义、带中文翻译），不是从受版权保护的词典抓取的；如果要换成正式授权的语料，按同样格式重写 `data/examples.json` 再执行上面的命令即可。
 
 ## 发布
 

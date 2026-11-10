@@ -19,8 +19,8 @@ backend/                       Django 项目
     serializers.py             输出结构，含每个词的 preview 间隔文案
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
-    management/commands/       seed_demo / seed_wordlists / import_dictionary
-    tests.py                   后端用例（当前 19 个）
+    management/commands/       seed_demo / seed_wordlists / import_dictionary / enrich_examples
+    tests.py                   后端用例（当前 24 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
@@ -33,8 +33,9 @@ frontend/
 data/
   sources/                     原始词表（CET.json、definitions.json）
   imports/                     可直接导入的 3500/5000 词 CSV
+  examples.json                例句 + 中文翻译（enrich_examples 的数据源）
   samples/words.csv            示例词典
-  scripts/build_wordlists.py   从 sources 生成 imports
+  scripts/build_wordlists.py   从 sources + examples 生成 imports
 docs/                          设计说明与审查报告
 ```
 
@@ -51,6 +52,7 @@ cd backend
 # Linux/macOS: ../.venv/bin/python manage.py migrate
 ../.venv/Scripts/python.exe manage.py seed_demo
 ../.venv/Scripts/python.exe manage.py seed_wordlists # 导入 3500/5000 并发布
+../.venv/Scripts/python.exe manage.py enrich_examples # 从 data/examples.json 补例句
 ../.venv/Scripts/python.exe manage.py runserver
 
 # 前端（另开一个终端）
@@ -80,6 +82,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - **复习队列**：`next_review_at <= now`，上限 `REVIEW_LIMIT = 50`。
 - **个人词典**：`Dictionary.owner` 非空即个人词典；列表/详情/enroll/统计/答题共用同一可见性判断（官方 + 自己的）。
 - **单词唯一**：`(dictionary, Lower(spelling))`，`Abandon` 与 `abandon` 是同一个词，导入时合并。
+- **例句**：`Word.example` 是英文例句，`Word.example_translation` 是中文翻译；批量填充只走 `enrich_examples`（数据源 `data/examples.json`），不要在教学流程里现生成。
 - **写进度**：必须在事务中 `select_for_update()` 后调用 `services.schedule()`，不要在视图里重算间隔。
 - **每日计时**：所有「今天」都用 `timezone.localdate()`，时区固定 `Asia/Shanghai`。
 
@@ -119,13 +122,15 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 19 个）。
-- 改填空/SRS/格式化 → 改 `frontend/tests/study.test.mjs`（当前 10 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 24 个）。
+- 改填空/SRS/格式化 → 改 `frontend/tests/study.test.mjs`（当前 15 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
 
 ## 9. 已知限制 / 待办
 
+- 例句与中文翻译来自 `data/examples.json`（项目生成，非第三方词典语料）；要换成授权语料，按同格式替换后跑 `enrich_examples --force` 与 `build_wordlists.py`。
+- 释义仍是 ECDICT 原始多义项文本，卡片/填空只显示 `primaryMeaning()` 截出的主释义，完整内容可展开。
 - 没有「撤销上一题」、错词本、学习历史图表；`wrong_count` 在攒但没有入口。
 - Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**。
 - 单词发音优先用 `audio_url`，缺失时退化为浏览器 Web Speech API。
