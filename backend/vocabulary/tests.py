@@ -1,9 +1,12 @@
 import io
 import json
+import os
+import tempfile
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 from openpyxl import Workbook
@@ -258,6 +261,28 @@ class ImportTests(ApiTestCase):
         self.assertEqual(Word.objects.filter(dictionary=self.dictionary, spelling__iexact='abandon').count(), 1)
         self.assertEqual(response.data['merged'], 2)
 
+    def test_import_reads_example_and_translation(self):
+        self.login('admin')
+        content = (
+            'word,meaning,example,example_translation\n'
+            '例句词,释义,She used the word in a sentence.,她把这个词用在了句子里。\n'
+        )
+        response = self.upload('examples.csv', content.encode('utf-8'))
+        self.assertEqual(response.status_code, 200, response.data)
+        word = Word.objects.get(dictionary=self.dictionary, spelling='例句词')
+        self.assertEqual(word.example, 'She used the word in a sentence.')
+        self.assertEqual(word.example_translation, '她把这个词用在了句子里。')
+
+    def test_answer_payload_includes_example_fields(self):
+        self.words[0].example = 'He abandoned the plan.'
+        self.words[0].example_translation = '他放弃了这个计划。'
+        self.words[0].save(update_fields=['example', 'example_translation'])
+        self.login()
+        self.enroll()
+        response = self.answer(self.words[0], 'good')
+        self.assertEqual(response.data['word']['example'], 'He abandoned the plan.')
+        self.assertEqual(response.data['word']['example_translation'], '他放弃了这个计划。')
+
     def test_personal_import_is_idempotent_and_owned(self):
         self.login()
         first = self.upload(
@@ -285,3 +310,47 @@ class ImportTests(ApiTestCase):
         self.assertEqual(header_only.status_code, 400)
         wrong_columns = self.upload('wrong.csv', b'term,definition\nx,y\n')
         self.assertEqual(wrong_columns.status_code, 400)
+
+class EnrichExamplesTests(ApiTestCase):
+    def write_examples(self, payload):
+        handle = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8')
+        json.dump(payload, handle, ensure_ascii=False)
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        return handle.name
+
+    def test_enrich_fills_missing_examples_only(self):
+        self.words[0].example = ''
+        self.words[0].save(update_fields=['example'])
+        self.words[1].example = 'Existing example.'
+        self.words[1].save(update_fields=['example'])
+        path = self.write_examples({'words': {
+            'abandon': {'example': 'He abandoned the plan.', 'zh': '他放弃了这个计划。'},
+            'ability': {'example': 'She has the ability to lead.', 'zh': '她有领导能力。'},
+            'nothere': {'example': 'not a real word', 'zh': '不存在'},
+        }})
+        call_command('enrich_examples', path=path, stdout=io.StringIO())
+        self.words[0].refresh_from_db()
+        self.words[1].refresh_from_db()
+        self.assertEqual(self.words[0].example, 'He abandoned the plan.')
+        self.assertEqual(self.words[0].example_translation, '他放弃了这个计划。')
+        # existing, different example must not receive a translation of another sentence
+        self.assertEqual(self.words[1].example, 'Existing example.')
+        self.assertEqual(self.words[1].example_translation, '')
+
+    def test_enrich_attaches_translation_to_identical_example(self):
+        self.words[0].example = 'He abandoned the plan.'
+        self.words[0].save(update_fields=['example'])
+        path = self.write_examples({'words': {'abandon': {'example': 'He abandoned the plan.', 'zh': '他放弃了这个计划。'}}})
+        call_command('enrich_examples', path=path, stdout=io.StringIO())
+        self.words[0].refresh_from_db()
+        self.assertEqual(self.words[0].example_translation, '他放弃了这个计划。')
+
+    def test_enrich_force_overwrites_existing(self):
+        self.words[0].example = 'Old example.'
+        self.words[0].save(update_fields=['example'])
+        path = self.write_examples({'words': {'abandon': {'example': 'New example here.', 'zh': '新的例句。'}}})
+        call_command('enrich_examples', path=path, force=True, stdout=io.StringIO())
+        self.words[0].refresh_from_db()
+        self.assertEqual(self.words[0].example, 'New example here.')
+        self.assertEqual(self.words[0].example_translation, '新的例句。')

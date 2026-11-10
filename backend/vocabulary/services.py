@@ -25,7 +25,7 @@ MASTERED_INTERVAL_DAYS = 21
 AGAIN_DELAY = timedelta(minutes=10)
 MAX_INTERVAL_DAYS = 365
 RATINGS = ('again', 'hard', 'good', 'easy')
-WORD_FIELDS = ('spelling', 'phonetic', 'part_of_speech', 'meaning', 'example', 'audio_url')
+WORD_FIELDS = ('spelling', 'phonetic', 'part_of_speech', 'meaning', 'example', 'example_translation', 'audio_url')
 
 
 class ImportFileError(ValueError):
@@ -243,17 +243,24 @@ def import_words(dictionary, rows):
             _reject(session, line_number, '释义超过 2000 个字符')
             continue
         key = spelling.casefold()
-        if key in prepared:
-            session['merged'] += 1
-            _reject(session, line_number, f'与前面的 {key} 重复，已合并', count_skipped=False)
         payload = {
             'spelling': spelling,
             'meaning': meaning,
             'phonetic': row.get('phonetic', ''),
             'part_of_speech': row.get('part_of_speech', ''),
             'example': row.get('example', '')[:2000],
+            'example_translation': (row.get('example_translation') or row.get('example_zh') or '')[:2000],
             'audio_url': row.get('audio_url', ''),
         }
+        if key in prepared:
+            # keep the richest variant when a file repeats a word in different case
+            merged = prepared[key]
+            for field, value in payload.items():
+                if value:
+                    merged[field] = value
+            session['merged'] += 1
+            _reject(session, line_number, f'与前面的 {key} 重复，已合并', count_skipped=False)
+            continue
         prepared[key] = payload
 
     if not prepared:

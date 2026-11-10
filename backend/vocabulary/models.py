@@ -48,6 +48,7 @@ class Word(models.Model):
     part_of_speech = models.CharField(max_length=80, blank=True)
     meaning = models.TextField()
     example = models.TextField(blank=True)
+    example_translation = models.TextField(blank=True)
     audio_url = models.URLField(blank=True)
 
     class Meta:

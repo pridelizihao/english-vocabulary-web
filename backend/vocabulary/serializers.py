@@ -14,7 +14,7 @@ class WordSerializer(serializers.ModelSerializer):
         model = Word
         fields = [
             'id', 'dictionary', 'spelling', 'phonetic', 'pronunciation_url',
-            'part_of_speech', 'meaning', 'example', 'audio_url', 'preview',
+            'part_of_speech', 'meaning', 'example', 'example_translation', 'audio_url', 'preview',
         ]
 
 

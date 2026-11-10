@@ -42,6 +42,7 @@ class Command(BaseCommand):
                         "part_of_speech": (row.get("part_of_speech") or "").strip(),
                         "meaning": meaning,
                         "example": (row.get("example") or "").strip(),
+                        "example_translation": (row.get("example_translation") or row.get("example_zh") or "").strip(),
                         "audio_url": (row.get("audio_url") or "").strip(),
                     },
                 )

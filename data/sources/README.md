@@ -21,3 +21,18 @@ Generated editions:
   alphabetical order.
 
 Regenerate with `python data/scripts/build_wordlists.py`.
+
+## Example sentences
+
+`data/examples.json` holds one short English example and its Chinese
+translation for each of the 4998 unique words in the two generated lists. It
+was written for this project (not copied from a dictionary), so the sentence
+style stays simple and learner-friendly and there is no third-party licence to
+clear. If you swap in a licensed corpus, keep the same structure:
+
+```json
+{"words": {"abandon": {"example": "He abandoned the plan.", "zh": "他放弃了这个计划。"}}}
+```
+
+then run `python manage.py enrich_examples --force` and
+`python data/scripts/build_wordlists.py`.
