@@ -1,20 +1,44 @@
 # English Vocabulary Web
 
-英语单词背诵网站初版，包含 Django REST 后端和 Vue 3 前端。
+英语单词背诵应用：Django REST 后端 + Vue 3 单页前端。每天 20 个新词，答错的词 10 分钟后再来一遍，答对的词按 1 / 3 / 7 天逐步拉开间隔。
 
-## 后端
+## 功能
+
+- 词典列表：显示总词数、已学数量、到期复习数；官方词典和个人词典分开标识
+- 学习：卡片（看答案后评分）和填空（按中文释义补全）两种模式，支持键盘操作
+- 复习调度：`again / hard / good / easy` 四档评分，间隔递增，间隔满 21 天才算「已掌握」
+- 每日预算：新词每天最多 20 个，复习优先；预算用完会提示而不是继续塞词
+- 个人词表：导入 CSV / JSON / XLSX，自动去重，只有自己可见，可删除
+- 数据面板：进度、已掌握、待复习、下次复习时间
+
+## 技术栈
+
+Django 5 · Django REST Framework · SQLite · Vue 3 · Vite · TypeScript
+生产镜像：gunicorn + nginx（`/api` 反代、`/static` 托管后台静态资源）
+
+```
+backend/    Django 项目（api、admin、管理命令）
+frontend/   Vue 3 + Vite 前端
+data/       词表来源、可导入 CSV、示例数据
+docs/       审查报告与设计说明
+AGENTS.md   给后续开发/代理的约定与踩坑清单
+```
+
+## 本地运行
+
+后端（虚拟环境在仓库根目录的 `.venv/`）：
 
 ```bash
 cd backend
-# 如果使用 Conda：conda activate base
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py seed_demo
-python manage.py createsuperuser
-python manage.py runserver
+../.venv/Scripts/python.exe manage.py migrate        # Windows
+# Linux/macOS: ../.venv/bin/python manage.py migrate
+../.venv/Scripts/python.exe manage.py seed_demo
+../.venv/Scripts/python.exe manage.py seed_wordlists  # 导入 3500/5000 词并发布
+../.venv/Scripts/python.exe manage.py createsuperuser
+../.venv/Scripts/python.exe manage.py runserver
 ```
 
-## 前端
+前端：
 
 ```bash
 cd frontend
@@ -22,16 +46,44 @@ npm install
 npm run dev
 ```
 
-CSV 示例位于 `data/samples/words.csv`。导入接口支持 CSV、JSON 和 XLSX。
+打开 `http://localhost:5173`，注册后即可学习。Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`，后台是 `http://127.0.0.1:8000/admin/`。
 
-前端开发服务器通过 Vite 将 `/api` 代理到 `http://127.0.0.1:8000`。启动后访问 `http://localhost:5173`，先注册账号即可学习示例词典。管理员可访问 `http://127.0.0.1:8000/admin/` 管理词典。
+## 测试
+
+```bash
+cd backend && ../.venv/Scripts/python.exe manage.py test   # 19 个用例
+cd frontend
+npm run typecheck   # tsc --noEmit
+npm run test        # 纯逻辑测试（node:test）
+npm run build
+```
+
+## 导入自己的词表
+
+前端「选择词典」页底部的导入框，或：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/dictionaries/import \
+  -b cookies.txt -H "X-CSRFToken: ..." \
+  -F "name=我的词表" -F "file=@data/samples/words.csv"
+```
+
+字段至少包含 `word` 和 `meaning`，可选 `phonetic / part_of_speech / example / audio_url`。
+支持 UTF-8 与 GBK 编码的 CSV、JSON 数组、XLSX；同一个词（忽略大小写）只会保留一条。
+
+官方词典的导入（需要 staff 账号）用 `python manage.py import_dictionary --dictionary "词典名" --file data/imports/xxx.csv --publish`。
 
 ## 发布
 
-生产环境先设置 `.env` 中的 `DJANGO_SECRET_KEY` 和 `DJANGO_ALLOWED_HOSTS`，再执行：
-
 ```bash
+cp .env.example .env    # 填写 DJANGO_SECRET_KEY 等
 docker compose up --build
 ```
 
-容器化页面访问 `http://localhost:8080`。3500 词和 5000 词典入口会由 `python manage.py seed_demo` 创建为草稿，导入拥有授权的词表后，在 Django Admin 中发布。
+访问 `http://localhost:8080`。容器启动时会自动 migrate、导入示例词典与 `data/imports` 词表并执行 collectstatic。
+
+> 本机开发环境没有 Docker，镜像配置尚未实机验证；如果启动失败，优先检查卷挂载与 `DJANGO_ALLOWED_HOSTS`。
+
+## 数据来源
+
+`data/sources/README.md` 记录了词表来源与授权提示。`data/imports/` 的 3500 / 5000 词是按字母序截取的核心子集，不代表官方考纲词量；商用或再分发前请确认上游许可。
