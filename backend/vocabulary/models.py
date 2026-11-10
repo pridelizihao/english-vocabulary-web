@@ -101,3 +101,34 @@ class UserWordProgress(models.Model):
 
     def __str__(self):
         return f'{self.user} · {self.word}'
+
+
+class AnswerLog(models.Model):
+    """Append-only record of every answer, used for the activity dashboard.
+
+    `UserWordProgress` only keeps the latest state per word, so daily / weekly
+    habit charts need this event log. Practice answers (`is_practice`) never
+    change the scheduling state; they are logged for statistics only.
+    """
+
+    RATING_CHOICES = [('again', '忘记了'), ('hard', '模糊'), ('good', '记住了'), ('easy', '很熟')]
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='answer_logs')
+    word = models.ForeignKey(Word, on_delete=models.CASCADE, related_name='answer_logs')
+    dictionary = models.ForeignKey(Dictionary, on_delete=models.CASCADE, related_name='answer_logs')
+    rating = models.CharField(max_length=10, choices=RATING_CHOICES)
+    is_new = models.BooleanField(default=False)
+    is_extra = models.BooleanField(default=False)
+    is_practice = models.BooleanField(default=False)
+    interval_before = models.PositiveIntegerField(default=0)
+    interval_after = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'created_at'], name='answerlog_user_time_idx'),
+            models.Index(fields=['user', 'dictionary'], name='answerlog_user_dict_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.user} · {self.word} · {self.rating}'

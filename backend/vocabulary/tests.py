@@ -12,7 +12,7 @@ from django.utils import timezone
 from openpyxl import Workbook
 from rest_framework.test import APIClient
 
-from .models import Dictionary, UserDictionary, UserWordProgress, Word
+from .models import AnswerLog, Dictionary, UserDictionary, UserWordProgress, Word
 from .services import schedule
 
 PASSWORD = 'Str0ngPass!23'
@@ -365,3 +365,117 @@ class SeedDictionariesTests(ApiTestCase):
         # running it twice must not duplicate anything
         call_command('seed_dictionaries', stdout=io.StringIO())
         self.assertEqual(Dictionary.objects.count(), 2)
+
+class ActivityAndPracticeTests(ApiTestCase):
+    def test_answer_writes_an_answer_log(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        log = AnswerLog.objects.get(user=self.user, word=self.words[0])
+        self.assertTrue(log.is_new)
+        self.assertFalse(log.is_extra)
+        self.assertFalse(log.is_practice)
+        self.assertEqual(log.interval_before, 0)
+        self.assertEqual(log.interval_after, 1)
+
+        self.answer(self.words[0], 'good')
+        logs = AnswerLog.objects.filter(user=self.user, word=self.words[0]).order_by('id')
+        self.assertEqual(logs.count(), 2)
+        self.assertFalse(logs[1].is_new)
+        self.assertEqual(logs[1].interval_before, 1)
+        self.assertEqual(logs[1].interval_after, 3)
+
+    def test_practice_answer_does_not_touch_schedule(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        progress = UserWordProgress.objects.get(user=self.user, word=self.words[0])
+        snapshot = (progress.interval_days, progress.review_count, progress.next_review_at, progress.streak)
+        response = self.client.post(
+            f'/api/study/{self.words[0].id}/answer', {'rating': 'again', 'practice': True}, format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['practice'])
+        progress.refresh_from_db()
+        self.assertEqual(
+            (progress.interval_days, progress.review_count, progress.next_review_at, progress.streak), snapshot,
+        )
+        log = AnswerLog.objects.get(is_practice=True)
+        self.assertEqual(log.rating, 'again')
+
+        unlearned = self.client.post(
+            f'/api/study/{self.words[1].id}/answer', {'rating': 'good', 'practice': True}, format='json',
+        )
+        self.assertEqual(unlearned.status_code, 400)
+
+    def test_extra_budget_is_opt_in_and_logged(self):
+        extra_words = [
+            Word.objects.create(dictionary=self.dictionary, spelling=f'extra{i:02d}', meaning='m')
+            for i in range(40)
+        ]
+        self.login()
+        self.enroll()
+        now = timezone.now()
+        for word in Word.objects.filter(dictionary=self.dictionary)[:20]:
+            UserWordProgress.objects.create(user=self.user, word=word, first_learned_at=now)
+
+        base = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(base['words'], [])
+        self.assertEqual(base['extra_used_today'], 0)
+
+        extra = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}&extra=20').data
+        self.assertEqual(len(extra['words']), 20)
+        self.assertEqual(extra['extra_budget'], 20)
+
+        first = Word.objects.get(id=extra['words'][0]['id'])
+        answer = self.answer(first, 'good')
+        self.assertTrue(answer.data['is_extra'])
+        self.assertEqual(AnswerLog.objects.get(user=self.user, word=first).is_extra, True)
+
+        again = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}&extra=20').data
+        self.assertEqual(again['extra_used_today'], 1)
+        self.assertEqual(len(again['words']), 20)
+
+    def test_early_review_orders_by_weakness(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        self.answer(self.words[1], 'good')
+        weak = UserWordProgress.objects.get(user=self.user, word=self.words[1])
+        weak.streak = 0
+        weak.save(update_fields=['streak'])
+
+        due = self.client.get(f'/api/review/today?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(due['words'], [])
+        early = self.client.get(f'/api/review/early?dictionary_id={self.dictionary.id}').data
+        self.assertEqual([item['word']['spelling'] for item in early['words']], ['ability', 'abandon'])
+        self.assertEqual(early['mode'], 'early')
+
+    def test_profile_summary_tracks_days_and_streak(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        self.answer(self.words[1], 'again')
+        yesterday = timezone.now() - timedelta(days=1)
+        log = AnswerLog.objects.order_by('-created_at').first()
+        AnswerLog.objects.filter(id=log.id).update(created_at=yesterday)
+
+        data = self.client.get('/api/profile/summary?days=7').data
+        self.assertEqual(data['days'], 7)
+        self.assertEqual(len(data['daily']), 7)
+        self.assertEqual(data['today']['answers'], 1)
+        self.assertEqual(data['today']['review'], 0)
+        self.assertEqual(data['streak'], 2)
+        self.assertEqual(data['totals']['answers'], 2)
+        self.assertEqual(data['totals']['learned'], 2)
+        names = [item['name'] for item in data['dictionaries']]
+        self.assertIn('CET4 Demo', names)
+        self.assertEqual(data['extra']['used_today'], 0)
+
+    def test_statistics_reports_extra_usage(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        data = self.client.get(f'/api/statistics?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(data['extra_used_today'], 0)
+        self.assertEqual(data['extra_limit'], 60)

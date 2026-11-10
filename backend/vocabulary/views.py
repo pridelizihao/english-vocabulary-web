@@ -1,10 +1,12 @@
 import re
+from datetime import timedelta
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Count, Q
+from django.db.models.functions import TruncDate
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -15,9 +17,11 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
-from .models import Dictionary, UserDictionary, UserWordProgress, Word
+from .models import AnswerLog, Dictionary, UserDictionary, UserWordProgress, Word
 from .serializers import DictionarySerializer, ProgressSerializer, WordSerializer
 from .services import (
+    EARLY_REVIEW_LIMIT,
+    EXTRA_NEW_LIMIT,
     NEW_WORD_LIMIT,
     RATINGS,
     REVIEW_LIMIT,
@@ -185,6 +189,14 @@ def enroll_dictionary(request, dictionary_id):
     return Response({'dictionary_id': dictionary.id, 'enrolled': True, 'created': created})
 
 
+def _clamp_int(value, low, high, default=0):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
 def _preview_for(progress=None):
     return preview_intervals(progress)
 
@@ -204,7 +216,16 @@ def today_study(request):
     progress = UserWordProgress.objects.filter(user=request.user, word__dictionary=dictionary)
     today = timezone.localdate()
     new_learned_today = progress.filter(first_learned_at__date=today).count()
-    budget = max(NEW_WORD_LIMIT - new_learned_today, 0)
+    base_left = max(NEW_WORD_LIMIT - new_learned_today, 0)
+
+    # "再来 20 个" only kicks in after the default daily budget is used up.
+    extra_requested = _clamp_int(request.query_params.get('extra'), 0, EXTRA_NEW_LIMIT)
+    extra_used_today = AnswerLog.objects.filter(
+        user=request.user, is_new=True, is_extra=True, created_at__date=today,
+    ).count()
+    extra_left = max(EXTRA_NEW_LIMIT - extra_used_today, 0)
+    extra_budget = min(extra_requested, extra_left) if base_left == 0 else 0
+    budget = base_left + extra_budget
 
     remaining = Word.objects.filter(dictionary=dictionary).exclude(id__in=progress.values('word_id'))
     if request.query_params.get('order') == 'random':
@@ -220,6 +241,9 @@ def today_study(request):
         'total': len(words),
         'new_limit': NEW_WORD_LIMIT,
         'new_learned_today': new_learned_today,
+        'extra_used_today': extra_used_today,
+        'extra_limit': EXTRA_NEW_LIMIT,
+        'extra_budget': extra_budget,
         'remaining_new': remaining.count(),
         'due_reviews': due_reviews,
     })
@@ -263,16 +287,46 @@ def answer_word(request, word_id):
     rating = request.data.get('rating')
     if rating not in RATINGS:
         return fail('rating 只能是 again / hard / good / easy')
+    practice = bool(request.data.get('practice'))
+    today = timezone.localdate()
+
     with transaction.atomic():
-        progress, _ = UserWordProgress.objects.select_for_update().get_or_create(user=request.user, word=word)
+        if practice:
+            progress = UserWordProgress.objects.filter(user=request.user, word=word).first()
+            if progress is None:
+                return fail('这个词还没有学过，不能练习')
+            AnswerLog.objects.create(
+                user=request.user, word=word, dictionary=word.dictionary, rating=rating,
+                is_practice=True, interval_before=progress.interval_days,
+                interval_after=progress.interval_days,
+            )
+            payload = ProgressSerializer(progress).data
+            payload['practice'] = True
+            payload['next_review_label'] = '仅练习，不改间隔'
+            payload['preview'] = preview_intervals(progress)
+            return Response(payload)
+
+        progress, created = UserWordProgress.objects.select_for_update().get_or_create(user=request.user, word=word)
+        new_today_before = UserWordProgress.objects.filter(
+            user=request.user, word__dictionary=word.dictionary, first_learned_at__date=today,
+        ).count()
+        is_extra = bool(created and new_today_before >= NEW_WORD_LIMIT)
+        interval_before = progress.interval_days
         schedule(progress, rating)
         progress.save(update_fields=[
             'status', 'review_count', 'wrong_count', 'streak', 'ease',
             'next_review_at', 'last_review_at', 'first_learned_at', 'interval_days',
         ])
+        AnswerLog.objects.create(
+            user=request.user, word=word, dictionary=word.dictionary, rating=rating,
+            is_new=created, is_extra=is_extra, interval_before=interval_before,
+            interval_after=progress.interval_days,
+        )
     payload = ProgressSerializer(progress).data
     payload['next_review_label'] = describe_interval(progress.interval_days, rating)
     payload['preview'] = preview_intervals(progress)
+    payload['is_new'] = created
+    payload['is_extra'] = is_extra
     return Response(payload)
 
 
@@ -297,6 +351,9 @@ def statistics(request):
         .values_list('next_review_at', flat=True).first()
     )
     new_learned_today = progress.filter(first_learned_at__date=today).count()
+    extra_used_today = AnswerLog.objects.filter(
+        user=request.user, is_new=True, is_extra=True, created_at__date=today,
+    ).count()
     return Response({
         'total_words': total,
         'learned_words': learned,
@@ -308,6 +365,123 @@ def statistics(request):
         'remaining_new': max(total - learned, 0),
         'progress_percent': round(learned / total * 100, 1) if total else 0,
         'next_review_at': next_review,
+        'extra_used_today': extra_used_today,
+        'extra_limit': EXTRA_NEW_LIMIT,
+    })
+
+
+@api_view(['GET'])
+def early_review(request):
+    error = require_authentication(request)
+    if error:
+        return error
+    dictionary_id = request.query_params.get('dictionary_id')
+    if not dictionary_id:
+        return fail('缺少 dictionary_id 参数')
+    dictionary, error = enrolled_dictionary(request, dictionary_id)
+    if error:
+        return error
+
+    now = timezone.now()
+    queryset = UserWordProgress.objects.filter(
+        user=request.user, word__dictionary=dictionary, next_review_at__gt=now,
+    ).select_related('word')
+    total = queryset.count()
+    order = request.query_params.get('order', 'weak')
+    if order == 'random':
+        queryset = queryset.order_by('?')
+    elif order == 'due':
+        queryset = queryset.order_by('next_review_at', 'id')
+    else:
+        queryset = queryset.order_by('streak', 'next_review_at', 'id')
+    limit = _clamp_int(request.query_params.get('limit'), 1, EARLY_REVIEW_LIMIT, EARLY_REVIEW_LIMIT)
+    items = list(queryset[:limit])
+    preview_map = {item.word_id: _preview_for(item) for item in items}
+    return Response({
+        'dictionary_id': dictionary.id,
+        'words': ProgressSerializer(items, many=True, context={'preview_map': preview_map}).data,
+        'total': total,
+        'limit': limit,
+        'mode': 'early',
+    })
+
+
+@api_view(['GET'])
+def profile_summary(request):
+    error = require_authentication(request)
+    if error:
+        return error
+    days = _clamp_int(request.query_params.get('days'), 7, 90, 30)
+    today = timezone.localdate()
+    start = today - timedelta(days=days - 1)
+    logs = AnswerLog.objects.filter(user=request.user)
+    rows = logs.filter(created_at__date__gte=start).annotate(day=TruncDate('created_at')).values('day').annotate(
+        answers=Count('id'),
+        new=Count('id', filter=Q(is_new=True)),
+        review=Count('id', filter=Q(is_new=False, is_practice=False)),
+        practice=Count('id', filter=Q(is_practice=True)),
+        extra=Count('id', filter=Q(is_extra=True)),
+    ).order_by('day')
+    by_day = {row['day']: row for row in rows}
+    daily = []
+    for offset in range(days):
+        day = start + timedelta(days=offset)
+        row = by_day.get(day)
+        daily.append({
+            'date': day.isoformat(),
+            'new': row['new'] if row else 0,
+            'review': row['review'] if row else 0,
+            'practice': row['practice'] if row else 0,
+            'extra': row['extra'] if row else 0,
+            'answers': row['answers'] if row else 0,
+        })
+
+    active_days = set(logs.annotate(day=TruncDate('created_at')).values_list('day', flat=True).distinct())
+    cursor = today if today in active_days else today - timedelta(days=1)
+    streak = 0
+    while cursor in active_days:
+        streak += 1
+        cursor -= timedelta(days=1)
+
+    now = timezone.now()
+    progress = UserWordProgress.objects.filter(user=request.user)
+    dictionary_rows = progress.values('word__dictionary').annotate(
+        learned=Count('id'),
+        mastered=Count('id', filter=Q(status='mastered')),
+        due=Count('id', filter=Q(next_review_at__lte=now)),
+    )
+    names = Dictionary.objects.in_bulk([row['word__dictionary'] for row in dictionary_rows])
+    dictionaries = []
+    for row in dictionary_rows:
+        dictionary = names.get(row['word__dictionary'])
+        if dictionary is None or dictionary.status != 'published':
+            continue
+        if dictionary.owner_id and dictionary.owner_id != request.user.id:
+            continue
+        dictionaries.append({
+            'id': dictionary.id,
+            'name': dictionary.name,
+            'learned': row['learned'],
+            'mastered': row['mastered'],
+            'due': row['due'],
+        })
+    dictionaries.sort(key=lambda item: item['name'])
+
+    extra_used_today = logs.filter(is_extra=True, created_at__date=today).count()
+    return Response({
+        'days': days,
+        'today': daily[-1],
+        'streak': streak,
+        'totals': {
+            'answers': logs.count(),
+            'active_days': len(active_days),
+            'learned': progress.count(),
+            'mastered': progress.filter(status='mastered').count(),
+            'due': progress.filter(next_review_at__lte=now).count(),
+        },
+        'daily': daily,
+        'dictionaries': dictionaries,
+        'extra': {'used_today': extra_used_today, 'limit': EXTRA_NEW_LIMIT},
     })
 
 

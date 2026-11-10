@@ -15,7 +15,9 @@ from openpyxl import load_workbook
 from .models import Word
 
 NEW_WORD_LIMIT = 20
+EXTRA_NEW_LIMIT = 60
 REVIEW_LIMIT = 50
+EARLY_REVIEW_LIMIT = 20
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 MAX_IMPORT_ROWS = 20000
 MAX_IMPORT_ERRORS = 50
