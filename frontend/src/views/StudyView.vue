@@ -51,7 +51,6 @@ function focusSlot(slotIndex: number) {
   nextTick(() => {
     const element = clozeBox.value?.querySelector<HTMLInputElement>(`input[data-index="${slotIndex}"]`)
     element?.focus()
-    element?.select()
   })
 }
 
@@ -308,8 +307,8 @@ onBeforeUnmount(() => {
         <strong class="wrong">还差一点</strong>
         <p>正确答案：<b>{{ word.spelling }}</b></p>
         <div class="cloze-actions">
-          <button :disabled="loading" @click="retry">再试一次</button>
-          <button class="primary" :disabled="loading" @click="emitRate('hard')">记为模糊</button>
+          <button class="primary" :disabled="loading" @click="retry">再试一次</button>
+          <button :disabled="loading" @click="emitRate('hard')">记为模糊</button>
         </div>
       </div>
     </section>

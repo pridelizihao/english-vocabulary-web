@@ -8,8 +8,8 @@ from vocabulary.models import Dictionary, Word
 
 DEMO_NAME = '示例英语词汇'
 EXTRA_DICTIONARIES = [
-    ('大学英语四级 3500 词', 'CET4 · 3500', '四级核心词汇，运行 seed_wordlists 可导入 data/imports 中的词表。'),
-    ('大学英语六级 5000 词', 'CET6 · 5000', '六级核心词汇，运行 seed_wordlists 可导入 data/imports 中的词表。'),
+    ('大学英语四级 3500 词', 'CET4 · 3500', '四级核心词汇，按字母序截取的前 3500 个词条。'),
+    ('大学英语六级 5000 词', 'CET6 · 5000', '四级与六级合并后按字母序截取的前 5000 个词条。'),
 ]
 
 
@@ -64,9 +64,9 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f'已准备示例词典：{dictionary.name}，单词 {count} 个。'))
 
         for name, level, description in EXTRA_DICTIONARIES:
-            Dictionary.objects.get_or_create(
+            Dictionary.objects.update_or_create(
                 name=name,
                 owner=None,
-                defaults={'level': level, 'description': description, 'status': 'draft'},
+                defaults={'level': level, 'description': description},
             )
         self.stdout.write(self.style.SUCCESS('已创建 3500 词和 5000 词典入口；运行 seed_wordlists 可导入并发布。'))

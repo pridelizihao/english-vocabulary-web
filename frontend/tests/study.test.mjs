@@ -6,7 +6,7 @@ import {
   buildQueue,
   checkCloze,
   clozeSlots,
-  emptyReason,
+  doneReason,
   formatDue,
   isClozeComplete,
   progressPercent,
@@ -83,11 +83,12 @@ test('again requeues once at the end of the session', () => {
   assert.equal(again.length, 2)
 })
 
-test('done reason distinguishes empty, finished and daily limit', () => {
+test('done reason distinguishes empty, finished, daily limit and normal', () => {
   const base = { total_words: 10, remaining_new: 10, today_new: 0, new_limit: 20 }
-  assert.equal(emptyReason({ ...base, total_words: 0 }), 'no-words')
-  assert.equal(emptyReason({ ...base, remaining_new: 0 }), 'all-learned')
-  assert.equal(emptyReason({ ...base, remaining_new: 4, today_new: 20 }), 'daily-limit')
+  assert.equal(doneReason({ ...base, total_words: 0 }), 'no-words')
+  assert.equal(doneReason({ ...base, remaining_new: 0 }), 'all-learned')
+  assert.equal(doneReason({ ...base, remaining_new: 4, today_new: 20 }), 'daily-limit')
+  assert.equal(doneReason({ ...base, remaining_new: 3497, today_new: 1 }), 'session-complete')
 })
 
 test('progress percent is clamped', () => {

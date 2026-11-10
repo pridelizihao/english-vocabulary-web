@@ -4,9 +4,7 @@ import * as api from '../api'
 import { navigate } from '../lib/router'
 import {
   buildQueue,
-  emptyReason,
   requeueAgain,
-  type EmptyReason,
   type StudyItem,
 } from '../lib/study'
 
@@ -44,7 +42,6 @@ const loading = ref(false)
 const error = ref('')
 const notice = ref('')
 const importResult = ref<api.ImportSummary | null>(null)
-const emptyState = ref<EmptyReason | 'session-complete' | null>(null)
 const mode = ref<Mode>(readStored<Mode>(MODE_KEY, ['card', 'cloze'], 'card'))
 const order = ref<Order>(readStored<Order>(ORDER_KEY, ['alpha', 'random'], 'alpha'))
 const bootstrapped = ref(false)
@@ -77,7 +74,6 @@ function resetSession() {
   index.value = 0
   completed.value = 0
   stats.value = null
-  emptyState.value = null
   activeDictionary.value = null
 }
 
@@ -170,10 +166,8 @@ async function startStudy(dictionaryId: number) {
     completed.value = 0
     stats.value = currentStats
     if (!queue.value.length) {
-      emptyState.value = emptyReason(currentStats)
       navigate(`/done/${dictionaryId}`)
     } else {
-      emptyState.value = null
       navigate(`/study/${dictionaryId}`)
     }
     return true
@@ -211,7 +205,6 @@ async function rate(rating: api.Rating) {
     if (rating === 'again') queue.value = requeueAgain(queue.value, item)
     if (index.value + 1 >= queue.value.length) {
       stats.value = await api.statistics(item.word.dictionary)
-      emptyState.value = 'session-complete'
       navigate(`/done/${item.word.dictionary}`)
     } else {
       index.value += 1
@@ -290,7 +283,6 @@ export function useSession() {
     error,
     notice,
     importResult,
-    emptyState,
     mode,
     order,
     bootstrapped,

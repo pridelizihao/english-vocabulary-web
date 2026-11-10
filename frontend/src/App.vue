@@ -2,7 +2,7 @@
 import { computed, onMounted, watch } from 'vue'
 
 import { useSession } from './composables/useSession'
-import { emptyReason } from './lib/study'
+import { doneReason } from './lib/study'
 import { navigate, route } from './lib/router'
 import AuthView from './views/AuthView.vue'
 import DictionariesView from './views/DictionariesView.vue'
@@ -21,7 +21,6 @@ const {
   loading,
   error,
   notice,
-  emptyState,
   mode,
   bootstrapped,
   bootstrap,
@@ -35,9 +34,8 @@ const {
 } = useSession()
 
 const reason = computed(() => {
-  if (emptyState.value) return emptyState.value
-  if (!stats.value) return null
-  return emptyReason({
+  if (!stats.value) return 'session-complete'
+  return doneReason({
     total_words: stats.value.total_words,
     remaining_new: stats.value.remaining_new,
     today_new: stats.value.today_new,

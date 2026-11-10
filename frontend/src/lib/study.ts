@@ -1,5 +1,4 @@
 import type { Progress, Rating, RatingPreview, Word } from '../api'
-
 export const RATINGS: Rating[] = ['again', 'hard', 'good', 'easy']
 
 export const RATING_META: Record<Rating, { label: string; fallbackHint: string; className: string }> = {
@@ -76,18 +75,19 @@ export function requeueAgain(queue: StudyItem[], item: StudyItem, maxRepeats = 1
   return [...queue, { ...item, repeats: item.repeats + 1 }]
 }
 
-export type EmptyReason = 'no-words' | 'all-learned' | 'daily-limit'
+export type DoneReason = 'session-complete' | 'daily-limit' | 'all-learned' | 'no-words'
 
-export function emptyReason(stats: {
+/** Why the study view has nothing left to show. */
+export function doneReason(stats: {
   total_words: number
   remaining_new: number
   today_new: number
   new_limit: number
-}): EmptyReason {
+}): DoneReason {
   if (stats.total_words === 0) return 'no-words'
   if (stats.remaining_new <= 0) return 'all-learned'
   if (stats.today_new >= stats.new_limit) return 'daily-limit'
-  return 'all-learned'
+  return 'session-complete'
 }
 
 export function rateHint(preview: RatingPreview | undefined, rating: Rating) {

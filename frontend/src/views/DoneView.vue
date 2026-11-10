@@ -2,13 +2,13 @@
 import { computed } from 'vue'
 
 import type { Statistics } from '../api'
-import { formatDue, progressPercent } from '../lib/study'
+import { formatDue, progressPercent, type DoneReason } from '../lib/study'
 
 const props = defineProps<{
   stats: Statistics | null
   dictionaryName: string
   completed: number
-  reason: 'session-complete' | 'daily-limit' | 'all-learned' | 'no-words' | null
+  reason: DoneReason
   loading: boolean
 }>()
 
@@ -41,7 +41,9 @@ const description = computed(() => {
     case 'daily-limit':
       return '每天 20 个新词更容易记牢。明天再来，或者先复习到期的词。'
     default:
-      return `本次答题 ${props.completed} 次。答错的词已经安排在十分钟后重新出现。`
+      return props.completed > 0
+        ? `本次答题 ${props.completed} 次。答错的词已经安排在十分钟后重新出现。`
+        : '答错的词会在十分钟后重新出现，答对的词按 1 / 3 / 7 天逐步拉开间隔。'
   }
 })
 
@@ -57,7 +59,7 @@ const percent = computed(() =>
     <p class="lede">{{ description }}</p>
 
     <div v-if="stats" class="stats">
-      <div>
+      <div v-if="completed > 0">
         <strong>{{ completed }}</strong>
         <span>本次答题</span>
       </div>
