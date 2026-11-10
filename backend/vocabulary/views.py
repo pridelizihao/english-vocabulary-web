@@ -411,7 +411,7 @@ def profile_summary(request):
     error = require_authentication(request)
     if error:
         return error
-    days = _clamp_int(request.query_params.get('days'), 7, 90, 30)
+    days = _clamp_int(request.query_params.get('days'), 7, 371, 371)
     today = timezone.localdate()
     start = today - timedelta(days=days - 1)
     logs = AnswerLog.objects.filter(user=request.user)
