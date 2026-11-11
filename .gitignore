@@ -10,3 +10,4 @@ backend/staticfiles/
 .tmpdir/
 *.tmpdir/
 .verify/
+backend/audio-cache/

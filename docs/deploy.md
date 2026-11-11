@@ -11,6 +11,7 @@ Docker 方式（`docker-compose.yml`）仍保留，但开发机没有 Docker，�
 | `/opt/english-vocabulary/venv` | Python 虚拟环境 |
 | `/opt/english-vocabulary/.env` | 生产环境变量（`chmod 600`） |
 | `/var/lib/english-vocabulary/db.sqlite3` | SQLite 数据库（**备份这个文件**） |
+| `/var/lib/english-vocabulary/audio` | 例句语音缓存（可删，会重新生成） |
 | `/var/www/english-vocabulary` | 前端 `dist` 静态文件 |
 
 ## 首次部署
@@ -26,7 +27,7 @@ tar -czf /tmp/ev.tar.gz --exclude='db.sqlite3*' --exclude=__pycache__ \
 scp /tmp/ev.tar.gz root@<服务器IP>:/tmp/
 
 # 3. 服务器上解包 + 依赖
-mkdir -p /opt/english-vocabulary /var/lib/english-vocabulary /var/www/english-vocabulary
+mkdir -p /opt/english-vocabulary /var/lib/english-vocabulary /var/lib/english-vocabulary/audio /var/www/english-vocabulary
 tar -xzf /tmp/ev.tar.gz -C /opt/english-vocabulary
 cp -r /opt/english-vocabulary/frontend/dist/. /var/www/english-vocabulary/
 rm -rf /opt/english-vocabulary/frontend
@@ -40,6 +41,7 @@ DJANGO_SECRET_KEY=<生成的随机串>
 DJANGO_ALLOWED_HOSTS=<服务器IP或域名>
 DJANGO_CSRF_TRUSTED_ORIGINS=http://<服务器IP或域名>
 DJANGO_DB_PATH=/var/lib/english-vocabulary/db.sqlite3
+DJANGO_AUDIO_DIR=/var/lib/english-vocabulary/audio
 DJANGO_AUTH_THROTTLE_RATE=10/min
 EOF
 chmod 600 /opt/english-vocabulary/.env

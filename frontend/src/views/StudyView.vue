@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { Rating } from '../api'
 import { useSpeech } from '../composables/useSpeech'
+import { sentenceAudioUrl } from '../lib/speech'
 import {
   RATINGS,
   RATING_META,
@@ -47,6 +48,8 @@ const {
   speak: speakWord,
   stop: stopSpeech,
   prefetch: prefetchSpeech,
+  speakSentence,
+  sentenceBusy,
   message: speechMessage,
   busy: speechBusy,
 } = useSpeech()
@@ -342,6 +345,14 @@ onBeforeUnmount(() => {
           <span v-for="(part, partIndex) in exampleParts" :key="partIndex" :class="{ hit: part.hit }">{{ part.text }}</span>
         </p>
         <p v-if="word.example_translation" class="example-translation">{{ word.example_translation }}</p>
+        <button
+          v-if="word.example"
+          class="link-button sentence-speak"
+          :disabled="sentenceBusy"
+          @click="speakSentence(word.example, sentenceAudioUrl(word.id))"
+        >
+          {{ sentenceBusy ? '🔊 生成中…' : '🔊 朗读例句' }}
+        </button>
         <div class="ratings">
           <button
             v-for="(rating, position) in RATINGS"

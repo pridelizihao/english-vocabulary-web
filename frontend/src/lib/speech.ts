@@ -8,6 +8,11 @@ export function englishVoice<T extends VoiceLike>(voices: T[]): T | undefined {
   return english.find((voice) => voice.localService) ?? english[0]
 }
 
+/** Server-side cached example-sentence audio (edge-tts). */
+export function sentenceAudioUrl(wordId: number) {
+  return `/api/words/${wordId}/example-audio`
+}
+
 export function onlineSpeechUrl(spelling: string) {
   return `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(spelling.trim())}&type=2`
 }

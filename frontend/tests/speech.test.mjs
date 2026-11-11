@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { englishVoice, onlineSpeechUrl } from '../src/lib/speech.ts'
+import { englishVoice, onlineSpeechUrl, sentenceAudioUrl } from '../src/lib/speech.ts'
 
 test('englishVoice prefers a local English voice', () => {
   const voices = [
@@ -32,4 +32,8 @@ test('onlineSpeechUrl encodes the spelling', () => {
     'https://dict.youdao.com/dictvoice?audio=take%20off&type=2',
   )
   assert.equal(onlineSpeechUrl("don't"), "https://dict.youdao.com/dictvoice?audio=don't&type=2")
+})
+
+test('sentenceAudioUrl points at the cached server audio', () => {
+  assert.equal(sentenceAudioUrl(42), '/api/words/42/example-audio')
 })

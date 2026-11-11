@@ -20,7 +20,7 @@ backend/                       Django 项目
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
     management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples / annotate_cefr
-    tests.py                   后端用例（当前 57 个）
+    tests.py                   后端用例（当前 62 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
@@ -91,7 +91,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - **幂等**：作答可带 `client_token`（前端每次作答生成），同一用户同一 token 只落一条流水，重复请求返回 `duplicate: true` 且不再推进间隔。
 - **统计口径**：`statistics.today_completed` = 今日**非练习**答题条数；所有统计（个人面板、额外新词用量、答题历史）都必须排除 `undone_at` 非空的记录。
 - **错词**：`wrong_count > 0` 即错词；错词练习走 `practice` 通道，只记录不改间隔。
-- **新词顺序**：默认 `core`：CEFR 等级 B1 → B2 → C1 → 未收录 → A2 → A1，`is_proper`（月份、人名、缩写）永远最后；另外支持 `alpha` / `random`。CEFR 来自 `data/sources/Oxford.json`，CSV 的 `cefr` 列或 `annotate_cefr` 命令写入。
+- **新词顺序**：默认 `core`：CEFR 等级 B1 → B2 → C1 → 未收录 → A2 → A1，`is_proper`（月份、人名、缩写）永远最后；同档内按 `(id * 1103515245 + 每天种子) mod 2^31-1` 打乱（同一天刷新顺序不变，隔天变），避免读成字母表；另外支持 `alpha` / `random`。CEFR 来自 `data/sources/Oxford.json`，CSV 的 `cefr` 列或 `annotate_cefr` 命令写入。
 - **标记已会**：作答时带 `known: true` 直接把词设为 `mastered`、间隔 365 天，日志记 `is_skip=True`（rating 固定 `easy`）；撤销同样按快照恢复。
 - **个人词典**：`Dictionary.owner` 非空即个人词典；列表/详情/enroll/统计/答题共用同一可见性判断（官方 + 自己的）。
 - **单词唯一**：`(dictionary, Lower(spelling))`，`Abandon` 与 `abandon` 是同一个词，导入时合并。
@@ -116,6 +116,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 | GET | `/api/dictionaries/{id}/` | 词典详情 |
 | GET | `/api/dictionaries/{id}/words?q=&filter=&sort=&page=&page_size=` | 词表分页/搜索（filter: all/new/learning/mastered/due/wrong） |
 | GET | `/api/words/{word_id}` | 单词详情：preview + progress + 最近 10 条答题记录 |
+| GET | `/api/words/{word_id}/example-audio` | 例句语音（edge-tts 生成后缓存到 `AUDIO_CACHE_DIR`） |
 | DELETE | `/api/dictionaries/{id}/` | 删除自己的词典（staff 可删官方） |
 | POST | `/api/dictionaries/{id}/enroll` | 开始学习（幂等） |
 | POST | `/api/dictionaries/import` | 导入个人词典（同名幂等，仅自己可见） |
@@ -145,8 +146,8 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 57 个）。
-- 改填空/SRS/热力图/朗读/词表 → 改 `frontend/tests/*.test.mjs`（当前 34 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 62 个）。
+- 改填空/SRS/热力图/朗读/词表 → 改 `frontend/tests/*.test.mjs`（当前 35 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
 
@@ -156,8 +157,9 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 释义仍是 ECDICT 原始多义项文本，卡片/填空只显示 `primaryMeaning()` 截出的主释义，完整内容可展开。
 - 没有「导出/分享」；撤销只覆盖 10 分钟内的最近一次作答，不做任意历史回滚。
 - Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**；生产走的是原生部署（nginx + gunicorn + systemd），步骤见 `docs/deploy.md`，已在 Ubuntu 24.04 上跑通。
-- 单词发音顺序是「词典自带 `audio_url` → 系统英文语音（Web Speech API）→ 有道在线发音」；本地语音最多等 900ms，失败就切在线。换词时 `prefetch()` 预载音频，播放器按 URL 缓存，第二次播放基本瞬时。卡片、填空和词详情都有「🔊 朗读」按钮；在线发音会把单词发到 `dict.youdao.com`，没有英文语音包时靠它兜底。
+- 单词发音顺序是「词典自带 `audio_url` → 系统英文语音（Web Speech API）→ 有道在线发音」；本地语音最多等 900ms，失败就切在线。整句朗读先试系统英文语音，失败才请求 `/api/words/{id}/example-audio`（首次 2–3 秒）。换词时 `prefetch()` 预载音频，播放器按 URL 缓存，第二次播放基本瞬时。卡片、填空和词详情都有「🔊 朗读」按钮；在线发音会把单词发到 `dict.youdao.com`，没有英文语音包时靠它兜底。
 - 词表来源见 `data/sources/README.md`，商用前需确认上游授权。
+- 例句语音用 edge-tts（`en-US-AriaNeural`）在服务器上生成，句子会发给 Microsoft 的语音服务；缓存在 `DJANGO_AUDIO_DIR`（生产 `/var/lib/english-vocabulary/audio`），删掉缓存目录会重新生成。
 - CEFR 只覆盖 Oxford 3000/5000 的 5062 个词；CET 词表里约 1/3 查不到等级，这些词在 core 顺序里排在 C1 之后、A2 之前。要更准的顺序需要引入词频数据。
 - SQLite 单文件；要上多实例/高并发前先换 PostgreSQL，并把 `db.sqlite3` 从仓库外备份策略里接进来。
 

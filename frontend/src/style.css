@@ -1625,3 +1625,12 @@ label {
 .known-button:hover {
   color: var(--brand-strong);
 }
+.sentence-speak {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sentence-speak:hover {
+  color: var(--brand-strong);
+}

@@ -50,6 +50,8 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+# Cached example-sentence audio (edge-tts); keep it outside the code directory.
+AUDIO_CACHE_DIR = os.environ.get('DJANGO_AUDIO_DIR', BASE_DIR / 'audio-cache')
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

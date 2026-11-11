@@ -1,13 +1,15 @@
 import re
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.db.models import Case, Count, F, OuterRef, Q, Subquery, When
-from django.db.models.functions import TruncDate
+from django.db.models.functions import Mod, TruncDate
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -29,6 +31,8 @@ from .services import (
     REVIEW_LIMIT,
     UNDO_WINDOW_MINUTES,
     ImportFileError,
+    SentenceAudioError,
+    sentence_audio_file,
     describe_interval,
     import_words,
     parse_import_rows,
@@ -376,6 +380,26 @@ def dictionary_words(request, dictionary_id):
 
 
 @api_view(['GET'])
+def example_audio(request, word_id):
+    """Cached MP3 of the example sentence, synthesised with edge-tts."""
+    word = Word.objects.filter(id=word_id).first()
+    if word is None:
+        return fail('单词不存在或没有访问权限', status.HTTP_404_NOT_FOUND)
+    _, error = dictionary_for_user(request, word.dictionary_id)
+    if error:
+        return fail('单词不存在或没有访问权限', status.HTTP_404_NOT_FOUND)
+    if not word.example.strip():
+        return fail('这个词还没有例句', status.HTTP_404_NOT_FOUND)
+    try:
+        audio = sentence_audio_file(word.example, settings.AUDIO_CACHE_DIR)
+    except SentenceAudioError:
+        return fail('例句语音生成失败，请稍后再试', status.HTTP_503_SERVICE_UNAVAILABLE)
+    response = FileResponse(open(audio, 'rb'), content_type='audio/mpeg')
+    response['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return response
+
+
+@api_view(['GET'])
 def word_detail(request, word_id):
     word = Word.objects.select_related('dictionary').filter(id=word_id).first()
     if word is None:
@@ -429,13 +453,17 @@ def today_study(request):
     if order == 'random':
         remaining = remaining.order_by('?')
     elif order == 'core':
+        # Same level should not read like a dictionary column: give every user
+        # a stable pseudo-random order per day (changes tomorrow, not on refresh).
+        seed = (request.user.id * 7919 + today.toordinal() * 104729) % 2147483647
         remaining = remaining.annotate(
             proper_rank=Case(When(is_proper=True, then=1), default=0),
             level_rank=Case(
                 *[When(cefr=level, then=rank) for level, rank in CORE_LEVEL_RANKS.items()],
                 default=CORE_LEVEL_DEFAULT,
             ),
-        ).order_by('proper_rank', 'level_rank', 'spelling', 'id')
+            shuffle_key=Mod(F('id') * 1103515245 + seed, 2147483647),
+        ).order_by('proper_rank', 'level_rank', 'shuffle_key', 'id')
     else:
         remaining = remaining.order_by('spelling', 'id')
     words = list(remaining[:budget]) if budget else []

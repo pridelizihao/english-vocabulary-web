@@ -7,13 +7,14 @@ from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from openpyxl import Workbook
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
 from .models import AnswerLog, Dictionary, UserDictionary, UserWordProgress, Word
-from .services import schedule
+from .services import SentenceAudioError, schedule
 
 PASSWORD = 'Str0ngPass!23'
 
@@ -788,6 +789,18 @@ class CoreOrderTests(ApiTestCase):
         alpha = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}&order=alpha').data
         self.assertEqual([item['spelling'] for item in alpha['words']], sorted(expected))
 
+    def test_core_order_is_stable_for_the_day(self):
+        Word.objects.all().delete()
+        for spelling in ('alpha', 'bravo', 'charlie', 'delta', 'echo'):
+            Word.objects.create(dictionary=self.dictionary, spelling=spelling, meaning='x', cefr='B1')
+        self.login()
+        self.enroll()
+        first = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}&order=core').data
+        second = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}&order=core').data
+        names_first = [item['spelling'] for item in first['words']]
+        self.assertEqual(names_first, [item['spelling'] for item in second['words']])
+        self.assertEqual(sorted(names_first), ['alpha', 'bravo', 'charlie', 'delta', 'echo'])
+
 
 class CefrImportTests(ApiTestCase):
     def test_import_reads_cefr_and_marks_proper_nouns(self):
@@ -879,3 +892,49 @@ class AnnotateCefrTests(ApiTestCase):
         self.assertFalse(access.is_proper)
         self.assertEqual(april.cefr, 'A1')
         self.assertTrue(april.is_proper)
+
+class SentenceAudioTests(ApiTestCase):
+    def setUp(self):
+        super().setUp()
+        self.words[0].example = 'She had read the previous chapter.'
+        self.words[0].save(update_fields=['example'])
+
+    def test_audio_is_generated_once_and_then_cached(self):
+        def fake(text, voice, target):
+            target.write_bytes(b'ID3fake-audio')
+
+        with tempfile.TemporaryDirectory() as cache, override_settings(AUDIO_CACHE_DIR=cache):
+            with patch('vocabulary.services._synthesise_sentence', side_effect=fake) as synth:
+                first = self.client.get(f'/api/words/{self.words[0].id}/example-audio')
+                self.assertEqual(first.status_code, 200)
+                self.assertEqual(first['Content-Type'], 'audio/mpeg')
+                self.assertEqual(b''.join(first.streaming_content), b'ID3fake-audio')
+
+                second = self.client.get(f'/api/words/{self.words[0].id}/example-audio')
+                self.assertEqual(second.status_code, 200)
+                self.assertEqual(b''.join(second.streaming_content), b'ID3fake-audio')
+
+                self.assertEqual(synth.call_count, 1)
+                self.assertEqual(len(os.listdir(cache)), 1)
+
+    def test_missing_example_returns_404(self):
+        self.words[1].example = ''
+        self.words[1].save(update_fields=['example'])
+        response = self.client.get(f'/api/words/{self.words[1].id}/example-audio')
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data['detail'], '这个词还没有例句')
+
+    def test_synthesis_failure_returns_503(self):
+        with tempfile.TemporaryDirectory() as cache, override_settings(AUDIO_CACHE_DIR=cache):
+            with patch('vocabulary.services._synthesise_sentence', side_effect=SentenceAudioError('boom')):
+                response = self.client.get(f'/api/words/{self.words[0].id}/example-audio')
+                self.assertEqual(response.status_code, 503)
+                self.assertIn('例句语音', response.data['detail'])
+
+    def test_personal_dictionary_audio_is_private(self):
+        personal = Dictionary.objects.create(name='Mine', owner=self.user, status='published')
+        word = Word.objects.create(dictionary=personal, spelling='secret', meaning='x', example='A secret example.')
+        other = get_user_model().objects.create_user(username='listener', password=PASSWORD)
+        other_client = APIClient()
+        other_client.post('/api/auth/login', {'username': 'listener', 'password': PASSWORD}, format='json')
+        self.assertEqual(other_client.get(f'/api/words/{word.id}/example-audio').status_code, 404)

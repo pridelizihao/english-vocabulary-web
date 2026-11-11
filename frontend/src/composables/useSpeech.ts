@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { englishVoice, onlineSpeechUrl } from '../lib/speech'
 
 const NO_AUDIO_MESSAGE = '朗读失败：浏览器没有放出声音（可能被拦截，或没有可用的英文语音）'
+const SENTENCE_FAILED_MESSAGE = '例句语音暂时没读出来，稍后再试'
 const LOCAL_VOICE_TIMEOUT = 900
 const AUDIO_TIMEOUT = 4000
 const AUDIO_CACHE_SIZE = 8
@@ -18,6 +19,7 @@ const AUDIO_CACHE_SIZE = 8
 export function useSpeech() {
   const message = ref('')
   const busy = ref(false)
+  const sentenceBusy = ref(false)
   const availableVoices = ref<SpeechSynthesisVoice[]>([])
   const available = typeof window !== 'undefined' && 'speechSynthesis' in window
   const audioCache = new Map<string, HTMLAudioElement>()
@@ -75,7 +77,7 @@ export function useSpeech() {
     }
   }
 
-  function playUrl(url: string) {
+  function playUrl(url: string, timeout = AUDIO_TIMEOUT) {
     return new Promise<boolean>((resolve) => {
       try {
         let audio = audioCache.get(url)
@@ -96,7 +98,7 @@ export function useSpeech() {
           window.clearTimeout(timer)
           resolve(ok)
         }
-        timer = window.setTimeout(() => finish(false), AUDIO_TIMEOUT)
+        timer = window.setTimeout(() => finish(false), timeout)
         audio.onerror = () => finish(false)
         try {
           audio.pause()
@@ -154,6 +156,61 @@ export function useSpeech() {
     })
   }
 
+  /** System voice for one sentence; resolves false when nothing starts. */
+  function speakSentenceLocally(text: string) {
+    if (!available) return Promise.resolve(false)
+    const voice = englishVoice(availableVoices.value)
+    if (!voice) return Promise.resolve(false)
+    return new Promise<boolean>((resolve) => {
+      const synth = window.speechSynthesis
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.voice = voice
+      utterance.lang = voice.lang || 'en-US'
+      utterance.rate = 0.95
+      let settled = false
+      let timer = 0
+      const finish = (ok: boolean) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        if (!ok) {
+          try {
+            synth.cancel()
+          } catch {
+            // 浏览器可能禁用 speechSynthesis，忽略
+          }
+        }
+        resolve(ok)
+      }
+      timer = window.setTimeout(() => finish(false), 1500)
+      utterance.onstart = () => finish(true)
+      utterance.onerror = () => finish(false)
+      try {
+        synth.speak(utterance)
+      } catch {
+        finish(false)
+      }
+    })
+  }
+
+  async function speakSentence(text: string, fallbackUrl?: string) {
+    const trimmed = text.trim()
+    if (!trimmed) return false
+    message.value = ''
+    stop()
+    sentenceBusy.value = true
+    try {
+      if (await speakSentenceLocally(trimmed)) return true
+      // The server caches an edge-tts MP3 for the sentence; first play may take
+      // a couple of seconds, later plays are instant.
+      if (fallbackUrl && (await playUrl(fallbackUrl, 15000))) return true
+      message.value = SENTENCE_FAILED_MESSAGE
+      return false
+    } finally {
+      sentenceBusy.value = false
+    }
+  }
+
   async function speak(spelling: string, providedUrls: (string | null | undefined)[] = []) {
     message.value = ''
     stop()
@@ -188,5 +245,5 @@ export function useSpeech() {
     stop()
   })
 
-  return { speak, stop, prefetch, message, busy, available }
+  return { speak, speakSentence, stop, prefetch, message, busy, sentenceBusy, available }
 }

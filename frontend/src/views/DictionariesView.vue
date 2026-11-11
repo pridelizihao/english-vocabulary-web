@@ -89,7 +89,7 @@ function downloadTemplate() {
           每日新词上限 20 个，到期复习会优先排队。已经掌握的词会自动拉开间隔，不必再手动安排。
         </p>
       </div>
-      <div class="order-switch" role="group" aria-label="新词顺序" title="考试核心：按 CEFR 等级优先 B1/B2，专有名词排最后">
+      <div class="order-switch" role="group" aria-label="新词顺序" title="考试核心：按 CEFR 等级优先 B1/B2，同档内每天打乱，专有名词排最后">
         <span class="muted">新词顺序</span>
         <button :class="{ active: order === 'core' }" :aria-pressed="order === 'core'" @click="setOrder('core')">
           考试核心

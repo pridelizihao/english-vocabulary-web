@@ -3,10 +3,14 @@
 Keeping the review scheduler and the import parser here makes both testable
 without going through HTTP.
 """
+import asyncio
 import csv
+import hashlib
 import io
 import json
+import os
 from datetime import timedelta
+from pathlib import Path
 
 from django.db import transaction
 from django.utils import timezone
@@ -41,8 +45,55 @@ def normalise_cefr(value):
     return text if text in CEFR_LEVELS else ''
 
 
+DEFAULT_SENTENCE_VOICE = 'en-US-AriaNeural'
+SENTENCE_AUDIO_VERSION = 'v1'
+SENTENCE_AUDIO_TIMEOUT = 20
+
+
 class ImportFileError(ValueError):
     """Raised when an uploaded file cannot be parsed into word rows."""
+
+
+class SentenceAudioError(RuntimeError):
+    """Raised when the example sentence cannot be synthesised."""
+
+
+def _synthesise_sentence(text, voice, target):
+    import edge_tts
+
+    async def run():
+        communicate = edge_tts.Communicate(text, voice)
+        await asyncio.wait_for(communicate.save(str(target)), timeout=SENTENCE_AUDIO_TIMEOUT)
+
+    asyncio.run(run())
+
+
+def sentence_audio_file(text, cache_dir, voice=DEFAULT_SENTENCE_VOICE):
+    """Return a cached MP3 for the sentence, synthesising it on first use."""
+    cleaned = (text or '').strip()
+    if not cleaned:
+        raise SentenceAudioError('empty sentence')
+    key = hashlib.sha1(f'{SENTENCE_AUDIO_VERSION}|{voice}|{cleaned}'.encode('utf-8')).hexdigest()
+    directory = Path(cache_dir)
+    target = directory / f'{key}.mp3'
+    if target.exists() and target.stat().st_size:
+        return target
+
+    directory.mkdir(parents=True, exist_ok=True)
+    temp = directory / f'{key}.{os.getpid()}.tmp'
+    try:
+        _synthesise_sentence(cleaned, voice, temp)
+        if not temp.exists() or not temp.stat().st_size:
+            raise SentenceAudioError('empty audio')
+        os.replace(temp, target)
+    except SentenceAudioError:
+        raise
+    except Exception as exc:
+        raise SentenceAudioError(str(exc)) from exc
+    finally:
+        if temp.exists():
+            temp.unlink()
+    return target
 
 
 # ---------------------------------------------------------------------------

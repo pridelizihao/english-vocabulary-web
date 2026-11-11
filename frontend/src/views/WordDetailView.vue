@@ -5,13 +5,14 @@ import type { WordDetail } from '../api'
 import { useSpeech } from '../composables/useSpeech'
 import { useSession } from '../composables/useSession'
 import { navigate } from '../lib/router'
+import { sentenceAudioUrl } from '../lib/speech'
 import { formatDue, primaryMeaning, splitExample } from '../lib/study'
 import { browseMemory, formatMoment, statusLabel } from '../lib/words'
 
 const props = defineProps<{ dictionaryId: number; wordId: number }>()
 
 const { loadWord, loading } = useSession()
-const { speak, prefetch, message } = useSpeech()
+const { speak, speakSentence, sentenceBusy, prefetch, message } = useSpeech()
 const detail = ref<WordDetail | null>(null)
 
 const exampleParts = computed(() => (detail.value ? splitExample(detail.value.example, detail.value.spelling) : []))
@@ -66,6 +67,14 @@ watch(() => props.wordId, load)
           <span v-for="(part, partIndex) in exampleParts" :key="partIndex" :class="{ hit: part.hit }">{{ part.text }}</span>
         </p>
         <p v-if="detail.example_translation" class="example-translation">{{ detail.example_translation }}</p>
+        <button
+          v-if="detail.example"
+          class="link-button sentence-speak"
+          :disabled="sentenceBusy"
+          @click="speakSentence(detail.example, sentenceAudioUrl(detail.id))"
+        >
+          {{ sentenceBusy ? '🔊 生成中…' : '🔊 朗读例句' }}
+        </button>
       </article>
 
       <section class="panel detail-panel">
