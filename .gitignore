@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 *.sqlite3*
 .venv/
+# 服务器上的虚拟环境目录叫 venv（本地是 .venv），两者都要忽略，别把 venv 提交进去
+venv/
 .env
 node_modules/
 # frontend/dist 故意入库：部署机不装 Node 构建链，`git pull` 直接拿到前端产物。
