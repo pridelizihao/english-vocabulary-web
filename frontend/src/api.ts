@@ -7,7 +7,16 @@ export type WordSort = 'alpha' | 'recent' | 'due' | 'wrong'
 export type ProgressStatus = 'new' | 'learning' | 'mastered'
 export type StudyOrder = 'core' | 'alpha' | 'random'
 
-export type User = { id: number; username: string; is_staff: boolean }
+export type User = { id: number; username: string; email: string; is_staff: boolean }
+
+export type EmailPurpose = 'login' | 'reset' | 'bind'
+
+export type EmailCodeSent = {
+  detail: string
+  sent: boolean
+  expires_in: number
+  retry_after: number
+}
 
 export type Dictionary = {
   id: number
@@ -104,6 +113,34 @@ export type ProfileSummary = {
   daily: ProfileDay[]
   dictionaries: ProfileDictionary[]
   extra: { used_today: number; limit: number }
+}
+
+export type RetentionBucket = {
+  label: string
+  low: number
+  high: number | null
+  attempts: number
+  kept: number
+  rate: number | null
+}
+
+export type ProgressPoint = { date: string; learned: number; mastered: number }
+
+export type CalibrationRow = {
+  rating: Rating
+  label: string
+  samples: number
+  forgotten: number
+  forgotten_rate: number | null
+}
+
+export type ProfileInsights = {
+  days: number
+  start: string
+  retention: RetentionBucket[]
+  progress: ProgressPoint[]
+  calibration: CalibrationRow[]
+  sample: { recall_answers: number; pairs: number }
 }
 
 export type Statistics = {
@@ -292,6 +329,39 @@ export async function logout() {
   return result
 }
 
+export async function sendEmailCode(email: string, purpose: EmailPurpose = 'login') {
+  await ensureCsrf()
+  return request<EmailCodeSent>('/auth/email/send', {
+    method: 'POST',
+    body: JSON.stringify({ email, purpose }),
+    headers: csrfHeaders(),
+  })
+}
+
+export async function verifyEmailCode(email: string, code: string, purpose: EmailPurpose = 'login') {
+  resetCsrf()
+  await ensureCsrf()
+  const result = await request<{ user: User; created?: boolean }>('/auth/email/verify', {
+    method: 'POST',
+    body: JSON.stringify({ email, code, purpose }),
+    headers: csrfHeaders(),
+  })
+  resetCsrf()
+  return result
+}
+
+export async function resetPasswordWithCode(email: string, code: string, password: string) {
+  resetCsrf()
+  await ensureCsrf()
+  const result = await request<{ detail: string; user: User }>('/auth/password/reset', {
+    method: 'POST',
+    body: JSON.stringify({ email, code, password }),
+    headers: csrfHeaders(),
+  })
+  resetCsrf()
+  return result
+}
+
 export async function dictionaries() {
   return request<Dictionary[]>('/dictionaries/')
 }
@@ -344,6 +414,10 @@ export async function reviewEarly(dictionaryId: number, order: 'weak' | 'due' | 
 
 export async function profileSummary(days = 30) {
   return request<ProfileSummary>(`/profile/summary?days=${days}`)
+}
+
+export async function profileInsights(days = 180) {
+  return request<ProfileInsights>(`/profile/insights?days=${days}`)
 }
 
 export async function statistics(dictionaryId: number) {

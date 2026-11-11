@@ -1634,3 +1634,323 @@ label {
 .sentence-speak:hover {
   color: var(--brand-strong);
 }
+
+/* auth tabs / 验证码 ------------------------------------------------------- */
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 20px;
+  border-radius: 14px;
+  background: var(--brand-soft);
+}
+
+.auth-tabs button {
+  border: 0;
+  border-radius: 11px;
+  padding: 9px 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.auth-tabs button.active {
+  background: var(--surface);
+  color: var(--brand-strong);
+  box-shadow: 0 4px 14px rgba(158, 62, 93, 0.12);
+}
+
+.auth-hint {
+  margin: -12px 0 18px;
+  font-size: 13px;
+}
+
+.auth-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.code-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.code-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  letter-spacing: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.code-button {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 14px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.code-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.inline-note {
+  margin: -6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* charts ------------------------------------------------------------------ */
+.chart-wrap {
+  width: 100%;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 220px;
+  overflow: visible;
+}
+
+.chart-bar {
+  fill: var(--brand);
+  opacity: 0.85;
+}
+
+.chart-bar.is-empty {
+  fill: var(--brand-soft);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-line.learned {
+  stroke: var(--brand);
+}
+
+.chart-line.mastered {
+  stroke: #4b8bd6;
+  stroke-dasharray: 6 5;
+}
+
+.chart-axis {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+  margin-top: 8px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-axis.is-spread {
+  grid-auto-flow: row;
+  grid-template-columns: auto auto;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chart-tick {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.chart-tick b {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.chart-tick span,
+.chart-tick em {
+  font-size: 11px;
+  font-style: normal;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chart-legend .dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 4px;
+  border-radius: 50%;
+}
+
+.chart-legend .dot.learned {
+  background: var(--brand);
+}
+
+.chart-legend .dot.mastered {
+  background: #4b8bd6;
+}
+
+.chart-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--brand-soft);
+}
+
+.chart-note.tone-good {
+  color: var(--ok);
+  background: rgba(26, 127, 90, 0.08);
+}
+
+.chart-note.tone-warn {
+  color: var(--danger);
+  background: rgba(180, 35, 78, 0.08);
+}
+
+.chart-note.tone-info {
+  color: var(--muted);
+}
+
+.calibration-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.calibration-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.calibration-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.calibration-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.calibration-table .rate-value {
+  font-weight: 600;
+}
+
+.calibration-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.bind-form {
+  display: grid;
+  gap: 10px;
+}
+
+.email-bound {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.email-bound strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.chart-wrap {
+  position: relative;
+}
+
+.chart-y {
+  position: absolute;
+  left: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.chart-y.top {
+  top: -2px;
+}
+
+.chart-y.bottom {
+  bottom: 22px;
+}
+
+/* 窄屏：面板标题不被右侧说明挤断，刻度字号收一点 */
+.profile-panel-head {
+  flex-wrap: wrap;
+}
+
+.profile-panel-head > strong {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.profile-panel-head > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+}
+
+@media (max-width: 520px) {
+  .profile-panel-head > span {
+    text-align: left;
+    font-size: 12px;
+  }
+
+  .chart-tick span,
+  .chart-tick em {
+    font-size: 10px;
+  }
+
+  .chart-tick b {
+    font-size: 12px;
+  }
+
+  .chart-axis {
+    gap: 0;
+  }
+}
+
+/* .code-row 里的按钮不允许被 flex 压成窄条（否则「绑定」会竖排换行） */
+.code-row > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.bind-code {
+  letter-spacing: 4px;
+  font-variant-numeric: tabular-nums;
+}

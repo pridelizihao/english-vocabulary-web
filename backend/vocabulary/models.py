@@ -108,6 +108,74 @@ class UserWordProgress(models.Model):
         return f'{self.user} · {self.word}'
 
 
+class EmailAddress(models.Model):
+    """A verified email that can sign in and receive password resets.
+
+    Kept separate from `auth.User.email` because that column is not unique and
+    is nullable; this table is the single source of truth for "which account
+    owns this address".
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='email_addresses',
+    )
+    email = models.EmailField(max_length=254, unique=True)
+    verified_at = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name_plural = 'email addresses'
+
+    def __str__(self):
+        return self.email
+
+
+class EmailVerification(models.Model):
+    """A one-shot verification code.
+
+    Only a salted hash of the code is stored: a database leak must not hand an
+    attacker a valid login code. Rows are append-only; a row is spent when
+    `consumed_at` is set (verified, too many attempts, or superseded).
+    """
+
+    PURPOSE_LOGIN = 'login'
+    PURPOSE_RESET = 'reset'
+    PURPOSE_BIND = 'bind'
+    PURPOSE_CHOICES = [
+        (PURPOSE_LOGIN, '登录 / 注册'),
+        (PURPOSE_RESET, '重置密码'),
+        (PURPOSE_BIND, '绑定邮箱'),
+    ]
+
+    email = models.EmailField(max_length=254)
+    purpose = models.CharField(max_length=16, choices=PURPOSE_CHOICES)
+    code_hash = models.CharField(max_length=128)
+    salt = models.CharField(max_length=32)
+    attempts = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    ip = models.CharField(max_length=64, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['email', 'purpose', 'created_at'], name='emailcode_lookup_idx'),
+            models.Index(fields=['ip', 'created_at'], name='emailcode_ip_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.email} · {self.purpose}'
+
+    @property
+    def is_spent(self):
+        return self.consumed_at is not None
+
+    @property
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
+
+
 class AnswerLog(models.Model):
     """Append-only record of every answer, used for the activity dashboard.
 

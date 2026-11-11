@@ -1,10 +1,12 @@
 import io
 import json
 import os
+import re
 import tempfile
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.core.cache import cache
 from django.core.management import call_command
 from django.test import TestCase, override_settings
@@ -13,7 +15,10 @@ from openpyxl import Workbook
 from rest_framework.test import APIClient
 from unittest.mock import patch
 
-from .models import AnswerLog, Dictionary, UserDictionary, UserWordProgress, Word
+from .email_codes import EmailDeliveryError
+from .models import (
+    AnswerLog, Dictionary, EmailAddress, EmailVerification, UserDictionary, UserWordProgress, Word,
+)
 from .services import SentenceAudioError, schedule
 
 PASSWORD = 'Str0ngPass!23'
@@ -938,3 +943,259 @@ class SentenceAudioTests(ApiTestCase):
         other_client = APIClient()
         other_client.post('/api/auth/login', {'username': 'listener', 'password': PASSWORD}, format='json')
         self.assertEqual(other_client.get(f'/api/words/{word.id}/example-audio').status_code, 404)
+
+@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+class EmailAuthTests(ApiTestCase):
+    EMAIL = 'learner@example.com'
+
+    def send(self, email=None, purpose='login', ip='10.0.0.1'):
+        return self.client.post(
+            '/api/auth/email/send',
+            {'email': self.EMAIL if email is None else email, 'purpose': purpose},
+            format='json', REMOTE_ADDR=ip,
+        )
+
+    def latest_code(self):
+        self.assertTrue(mail.outbox, 'expected a verification email')
+        match = re.search(r'\b(\d{6})\b', mail.outbox[-1].body)
+        self.assertIsNotNone(match, mail.outbox[-1].body)
+        return match.group(1)
+
+    def verify(self, code, email=None, purpose='login', ip='10.0.0.2'):
+        return self.client.post(
+            '/api/auth/email/verify',
+            {'email': self.EMAIL if email is None else email, 'code': code,
+             'purpose': purpose},
+            format='json', REMOTE_ADDR=ip,
+        )
+
+    def test_email_login_creates_account_and_session(self):
+        response = self.send()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['sent'])
+        code = self.latest_code()
+
+        verified = self.verify(code)
+        self.assertEqual(verified.status_code, 200, verified.data)
+        self.assertTrue(verified.data['created'])
+        self.assertEqual(verified.data['user']['email'], self.EMAIL)
+
+        me = self.client.get('/api/auth/me')
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.data['user']['email'], self.EMAIL)
+        self.assertTrue(EmailAddress.objects.filter(email=self.EMAIL).exists())
+
+    def test_second_login_reuses_the_account(self):
+        self.assertEqual(self.send().status_code, 200)
+        first = self.verify(self.latest_code())
+        self.assertEqual(first.status_code, 200, first.data)
+        # 冷却窗口是真实时间，测试里把上一次的发送时间往前挪。
+        EmailVerification.objects.update(created_at=timezone.now() - timedelta(minutes=5))
+        cache.clear()
+        self.client.logout()
+        self.assertEqual(self.send(ip='10.0.0.3').status_code, 200)
+        second = self.verify(self.latest_code(), ip='10.0.0.4')
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertFalse(second.data['created'])
+        self.assertEqual(second.data['user']['id'], first.data['user']['id'])
+
+    def test_code_cannot_be_used_twice(self):
+        self.assertEqual(self.send().status_code, 200)
+        code = self.latest_code()
+        self.assertEqual(self.verify(code, ip='10.0.0.5').status_code, 200)
+        cache.clear()
+        reused = self.verify(code, ip='10.0.0.6')
+        self.assertEqual(reused.status_code, 400)
+        self.assertIn('失效', reused.data['detail'])
+
+    def test_wrong_code_burns_the_budget(self):
+        self.assertEqual(self.send().status_code, 200)
+        code = self.latest_code()
+        for attempt in range(4):
+            wrong = self.verify('000000' if code != '000000' else '111111', ip=f'10.0.1.{attempt}')
+            self.assertEqual(wrong.status_code, 400, wrong.data)
+            self.assertEqual(wrong.data['detail'], '验证码不正确')
+        # Fifth miss spends the code; even the right one is now rejected.
+        self.assertEqual(self.verify('000000', ip='10.0.1.9').status_code, 400)
+        locked = self.verify(code, ip='10.0.1.10')
+        self.assertEqual(locked.status_code, 400)
+        self.assertIn('重新获取', locked.data['detail'])
+
+    def test_expired_code_is_rejected(self):
+        self.assertEqual(self.send().status_code, 200)
+        code = self.latest_code()
+        EmailVerification.objects.filter(email=self.EMAIL).update(
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        response = self.verify(code)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('过期', response.data['detail'])
+
+    def test_resend_is_cooled_down(self):
+        self.assertEqual(self.send().status_code, 200)
+        again = self.send(ip='10.0.0.7')
+        self.assertEqual(again.status_code, 429, again.data)
+        self.assertGreater(again.data['retry_after'], 0)
+        self.assertIn('秒后再试', again.data['detail'])
+
+    def test_send_rejects_bad_address_in_chinese(self):
+        response = self.send(email='not-an-email')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], '邮箱格式不正确')
+
+    def test_email_is_normalized_before_storage(self):
+        self.assertEqual(self.send(email='  LEARNER@Example.COM ').status_code, 200)
+        self.assertEqual(EmailVerification.objects.filter(email=self.EMAIL).count(), 1)
+        self.assertEqual(mail.outbox[-1].to, [self.EMAIL])
+
+    def test_reset_password_unknown_address_looks_successful(self):
+        response = self.send(purpose='reset')
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data['sent'])
+        self.assertFalse(mail.outbox)
+
+    def test_reset_password_updates_credentials(self):
+        EmailAddress.objects.create(user=self.user, email=self.EMAIL)
+        EmailAddress.objects.filter(user=self.user).update(user=self.user)
+        self.assertEqual(self.send(purpose='reset').status_code, 200)
+        code = self.latest_code()
+        response = self.client.post('/api/auth/password/reset', {
+            'email': self.EMAIL, 'code': code, 'password': 'FreshPass!2026',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+
+        self.client.logout()
+        old = self.client.post('/api/auth/login', {'username': 'learner', 'password': PASSWORD}, format='json')
+        self.assertEqual(old.status_code, 400)
+        new = self.client.post('/api/auth/login', {'username': 'learner', 'password': 'FreshPass!2026'}, format='json')
+        self.assertEqual(new.status_code, 200, new.data)
+
+    def test_reset_password_rejects_weak_password_without_burning_code(self):
+        EmailAddress.objects.create(user=self.user, email=self.EMAIL)
+        self.assertEqual(self.send(purpose='reset').status_code, 200)
+        code = self.latest_code()
+        weak = self.client.post('/api/auth/password/reset', {
+            'email': self.EMAIL, 'code': code, 'password': '12345678',
+        }, format='json')
+        self.assertEqual(weak.status_code, 400)
+        good = self.client.post('/api/auth/password/reset', {
+            'email': self.EMAIL, 'code': code, 'password': 'FreshPass!2026',
+        }, format='json')
+        self.assertEqual(good.status_code, 200, good.data)
+
+    def test_bind_email_requires_login_and_rejects_taken_address(self):
+        anonymous = self.send(email='someone@example.com', purpose='bind')
+        self.assertEqual(anonymous.status_code, 401)
+
+        other = get_user_model().objects.create_user(username='other', password=PASSWORD)
+        EmailAddress.objects.create(user=other, email='taken@example.com')
+        self.login()
+        taken = self.send(email='taken@example.com', purpose='bind')
+        self.assertEqual(taken.status_code, 400)
+
+        fresh = self.send(email='bound@example.com', purpose='bind', ip='10.0.2.1')
+        self.assertEqual(fresh.status_code, 200, fresh.data)
+        verified = self.verify(self.latest_code(), email='bound@example.com', purpose='bind', ip='10.0.2.2')
+        self.assertEqual(verified.status_code, 200, verified.data)
+        self.assertTrue(EmailAddress.objects.filter(email='bound@example.com', user=self.user).exists())
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.email, 'bound@example.com')
+
+    def test_login_code_cannot_be_used_for_reset(self):
+        self.assertEqual(self.send().status_code, 200)
+        code = self.latest_code()
+        response = self.client.post('/api/auth/password/reset', {
+            'email': self.EMAIL, 'code': code, 'password': 'FreshPass!2026',
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+
+    def test_delivery_failure_does_not_start_cooldown(self):
+        with patch('vocabulary.views.send_code_email', side_effect=EmailDeliveryError('smtp down')):
+            failed = self.send()
+        self.assertEqual(failed.status_code, 502)
+        self.assertFalse(EmailVerification.objects.filter(email=self.EMAIL).exists())
+        retried = self.send(ip='10.0.3.1')
+        self.assertEqual(retried.status_code, 200, retried.data)
+
+
+class InsightsTests(ApiTestCase):
+    def setUp(self):
+        super().setUp()
+        self.login()
+
+    def log(self, word, rating, interval_before=0, interval_after=0, when=None, practice=False):
+        entry = AnswerLog.objects.create(
+            user=self.user, word=word, dictionary=self.dictionary, rating=rating,
+            interval_before=interval_before, interval_after=interval_after,
+            is_practice=practice,
+        )
+        if when is not None:
+            AnswerLog.objects.filter(id=entry.id).update(created_at=when)
+        return entry
+
+    def test_retention_curve_buckets_reviews_only(self):
+        now = timezone.now()
+        self.log(self.words[0], 'good', interval_before=3, when=now - timedelta(days=3))
+        self.log(self.words[0], 'again', interval_before=3, when=now - timedelta(days=2))
+        # First sighting (interval 0) is not a memory test.
+        self.log(self.words[1], 'again', interval_before=0, when=now - timedelta(days=2))
+        # Practice answers would skew retention with hand-picked weak words.
+        self.log(self.words[1], 'again', interval_before=5, when=now - timedelta(days=2), practice=True)
+
+        response = self.client.get('/api/profile/insights')
+        self.assertEqual(response.status_code, 200)
+        buckets = {row['label']: row for row in response.data['retention']}
+        self.assertEqual(buckets['2–3 天']['attempts'], 2)
+        self.assertEqual(buckets['2–3 天']['kept'], 1)
+        self.assertEqual(buckets['2–3 天']['rate'], 0.5)
+        self.assertIsNone(buckets['8–14 天']['rate'])
+        self.assertEqual(response.data['sample']['recall_answers'], 2)
+
+    def test_calibration_pairs_adjacent_answers(self):
+        now = timezone.now()
+        # easy -> next time forgotten
+        self.log(self.words[0], 'easy', interval_before=0, when=now - timedelta(days=4))
+        self.log(self.words[0], 'again', interval_before=9, when=now - timedelta(days=2))
+        # good -> next time remembered
+        self.log(self.words[1], 'good', interval_before=0, when=now - timedelta(days=4))
+        self.log(self.words[1], 'good', interval_before=3, when=now - timedelta(days=1))
+
+        response = self.client.get('/api/profile/insights')
+        rows = {row['rating']: row for row in response.data['calibration']}
+        self.assertEqual(rows['easy']['samples'], 1)
+        self.assertEqual(rows['easy']['forgotten'], 1)
+        self.assertEqual(rows['easy']['forgotten_rate'], 1.0)
+        self.assertEqual(rows['good']['samples'], 1)
+        self.assertEqual(rows['good']['forgotten'], 0)
+        self.assertEqual(rows['again']['samples'], 0)
+        self.assertIsNone(rows['again']['forgotten_rate'])
+
+    def test_same_round_requeue_is_not_a_calibration_pair(self):
+        now = timezone.now()
+        self.log(self.words[0], 'again', interval_before=0, when=now - timedelta(minutes=30))
+        self.log(self.words[0], 'good', interval_before=0, when=now - timedelta(minutes=20))
+        response = self.client.get('/api/profile/insights')
+        self.assertEqual(response.data['sample']['pairs'], 0)
+
+    def test_progress_series_is_cumulative(self):
+        today = timezone.localdate()
+        early = today - timedelta(days=4)
+        later = today - timedelta(days=1)
+        UserWordProgress.objects.create(
+            user=self.user, word=self.words[0], status='learning',
+            first_learned_at=timezone.now() - timedelta(days=4),
+        )
+        UserWordProgress.objects.create(
+            user=self.user, word=self.words[1], status='learning',
+            first_learned_at=timezone.now() - timedelta(days=1),
+        )
+        response = self.client.get('/api/profile/insights?days=7')
+        series = {row['date']: row for row in response.data['progress']}
+        self.assertEqual(series[early.isoformat()]['learned'], 1)
+        self.assertEqual(series[later.isoformat()]['learned'], 2)
+        self.assertEqual(response.data['progress'][-1]['date'], today.isoformat())
+        self.assertEqual(len(response.data['progress']), 7)
+
+    def test_insights_requires_login(self):
+        self.client.logout()
+        self.assertEqual(self.client.get('/api/profile/insights').status_code, 401)

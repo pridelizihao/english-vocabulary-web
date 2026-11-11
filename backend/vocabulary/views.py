@@ -1,4 +1,5 @@
 import re
+import secrets
 from datetime import timedelta
 
 from django.conf import settings
@@ -7,7 +8,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Case, Count, F, OuterRef, Q, Subquery, When
+from django.db.models import Case, Count, F, Min, OuterRef, Q, Subquery, When
 from django.db.models.functions import Mod, TruncDate
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -21,11 +22,21 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
-from .models import AnswerLog, Dictionary, UserDictionary, UserWordProgress, Word
+from .email_codes import (
+    EmailCodeError,
+    EmailDeliveryError,
+    EmailRateLimitError,
+    normalize_email,
+    issue_code,
+    send_code_email,
+    verify_code,
+)
+from .models import AnswerLog, Dictionary, EmailAddress, EmailVerification, UserDictionary, UserWordProgress, Word
 from .serializers import DictionarySerializer, ProgressSerializer, WordListSerializer, WordSerializer
 from .services import (
     EARLY_REVIEW_LIMIT,
     EXTRA_NEW_LIMIT,
+    MASTERED_INTERVAL_DAYS,
     NEW_WORD_LIMIT,
     RATINGS,
     REVIEW_LIMIT,
@@ -60,6 +71,18 @@ class AuthThrottle(AnonRateThrottle):
     scope = 'auth'
 
 
+class EmailCodeThrottle(AnonRateThrottle):
+    scope = 'email_code'
+
+
+def client_ip(request):
+    """Best-effort client address; nginx forwards it in X-Forwarded-For."""
+    forwarded = request.META.get('HTTP_X_FORWARDED_FOR', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()[:64]
+    return (request.META.get('REMOTE_ADDR') or '')[:64]
+
+
 def fail(message, status_code=status.HTTP_400_BAD_REQUEST):
     return Response({'detail': message}, status=status_code)
 
@@ -71,7 +94,12 @@ def require_authentication(request):
 
 
 def current_user_payload(user):
-    return {'user': {'id': user.id, 'username': user.username, 'is_staff': user.is_staff}}
+    return {'user': {
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'is_staff': user.is_staff,
+    }}
 
 
 def visible_dictionaries(user):
@@ -157,6 +185,170 @@ def me(request):
     if error:
         return error
     return Response(current_user_payload(request.user))
+
+
+# --- email codes ------------------------------------------------------------
+# 验证码登录同时承担注册：邮箱第一次验证通过时就地建账号。所有「这个邮箱存不
+# 存在」的差别都藏在返回文案里，避免把登录接口变成账号枚举器。
+
+EMAIL_CODE_SENT = '如果这个邮箱可以使用，验证码已经发出，请查收'
+
+
+def _username_for_email(email):
+    """Derive a unique username (3-30 chars, see `USERNAME_PATTERN`)."""
+    local = re.sub(r'[^\w.@+-]', '', email.split('@')[0])[:20].strip('._-')
+    candidate = local if len(local) >= 3 else f'u_{secrets.token_hex(3)}'
+    base = candidate
+    suffix = 1
+    while User.objects.filter(username__iexact=candidate).exists():
+        suffix += 1
+        candidate = f'{base[:30 - len(str(suffix))]}{suffix}'
+    return candidate
+
+
+def _account_for_email(email):
+    """Return `(user, created)` for a verified address, creating the account lazily."""
+    identity = EmailAddress.objects.select_related('user').filter(email=email).first()
+    if identity is not None:
+        return identity.user, False
+    try:
+        with transaction.atomic():
+            user = User(username=_username_for_email(email), email=email)
+            user.set_unusable_password()
+            user.save()
+            EmailAddress.objects.create(user=user, email=email)
+    except IntegrityError:
+        # A concurrent request created the same address first: adopt that account.
+        identity = EmailAddress.objects.select_related('user').filter(email=email).first()
+        if identity is None:
+            raise
+        return identity.user, False
+    return user, True
+
+
+def _code_sent_payload(sent, retry_after=None):
+    return {
+        'detail': EMAIL_CODE_SENT,
+        'sent': sent,
+        'expires_in': settings.EMAIL_CODE_TTL_MINUTES * 60,
+        'retry_after': settings.EMAIL_CODE_COOLDOWN_SECONDS if retry_after is None else retry_after,
+    }
+
+
+@api_view(['POST'])
+@parser_classes([JSONParser])
+@throttle_classes([EmailCodeThrottle])
+def send_email_code(request):
+    purpose = (request.data.get('purpose') or EmailVerification.PURPOSE_LOGIN).strip()
+    if purpose not in (EmailVerification.PURPOSE_LOGIN, EmailVerification.PURPOSE_RESET,
+                       EmailVerification.PURPOSE_BIND):
+        return fail('不支持的验证码类型')
+    if purpose == EmailVerification.PURPOSE_BIND:
+        error = require_authentication(request)
+        if error:
+            return error
+    try:
+        email = normalize_email(request.data.get('email'))
+    except EmailCodeError as exc:
+        return fail(str(exc))
+
+    if purpose == EmailVerification.PURPOSE_RESET:
+        # Pretend success for unknown addresses; the mail is simply not sent.
+        if not EmailAddress.objects.filter(email=email).exists():
+            return Response(_code_sent_payload(sent=False))
+    if purpose == EmailVerification.PURPOSE_BIND:
+        if EmailAddress.objects.filter(email=email).exclude(user=request.user).exists():
+            return fail('这个邮箱已经绑定在别的账号上了')
+        if EmailAddress.objects.filter(email=email, user=request.user).exists():
+            return fail('这个邮箱已经绑定到你的账号了')
+
+    try:
+        verification, code = issue_code(email=email, purpose=purpose, ip=client_ip(request))
+    except EmailRateLimitError as exc:
+        return Response(
+            {'detail': str(exc), 'retry_after': exc.retry_after},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+    except EmailCodeError as exc:
+        return fail(str(exc))
+
+    try:
+        send_code_email(email=email, code=code, purpose=purpose)
+    except EmailDeliveryError as exc:
+        # Drop the row so a failed delivery does not start the cooldown clock.
+        verification.delete()
+        return fail(str(exc), status.HTTP_502_BAD_GATEWAY)
+
+    return Response(_code_sent_payload(sent=True))
+
+
+@api_view(['POST'])
+@parser_classes([JSONParser])
+@throttle_classes([EmailCodeThrottle])
+def verify_email_code(request):
+    purpose = (request.data.get('purpose') or EmailVerification.PURPOSE_LOGIN).strip()
+    if purpose not in (EmailVerification.PURPOSE_LOGIN, EmailVerification.PURPOSE_BIND):
+        return fail('这个验证码不能在这里使用')
+    if purpose == EmailVerification.PURPOSE_BIND:
+        error = require_authentication(request)
+        if error:
+            return error
+    try:
+        email = normalize_email(request.data.get('email'))
+    except EmailCodeError as exc:
+        return fail(str(exc))
+    try:
+        verify_code(email=email, purpose=purpose, code=request.data.get('code'))
+    except EmailCodeError as exc:
+        return fail(str(exc))
+
+    if purpose == EmailVerification.PURPOSE_BIND:
+        if EmailAddress.objects.filter(email=email).exclude(user=request.user).exists():
+            return fail('这个邮箱已经绑定在别的账号上了')
+        with transaction.atomic():
+            EmailAddress.objects.update_or_create(
+                email=email, defaults={'user': request.user, 'verified_at': timezone.now()},
+            )
+            if not request.user.email:
+                request.user.email = email
+                request.user.save(update_fields=['email'])
+        return Response({**current_user_payload(request.user), 'bound': True})
+
+    user, created = _account_for_email(email)
+    login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+    return Response({**current_user_payload(user), 'created': created})
+
+
+@api_view(['POST'])
+@parser_classes([JSONParser])
+@throttle_classes([EmailCodeThrottle])
+def reset_password(request):
+    try:
+        email = normalize_email(request.data.get('email'))
+    except EmailCodeError as exc:
+        return fail(str(exc))
+    password = request.data.get('password') or ''
+    if len(password) < 8:
+        return fail('密码至少需要 8 位')
+    # Validate the password before spending the code: a rejected password must
+    # not force the learner to request another mail.
+    try:
+        validate_password(password)
+    except DjangoValidationError as exc:
+        return fail(' '.join(exc.messages))
+    try:
+        verify_code(email=email, purpose=EmailVerification.PURPOSE_RESET, code=request.data.get('code'))
+    except EmailCodeError as exc:
+        return fail(str(exc))
+
+    identity = EmailAddress.objects.select_related('user').filter(email=email).first()
+    if identity is None:
+        return fail('这个邮箱还没有绑定账号')
+    user = identity.user
+    user.set_password(password)
+    user.save(update_fields=['password'])
+    login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+    return Response({'detail': '密码已经重置，已为你登录', **current_user_payload(user)})
 
 
 # ---------------------------------------------------------------------------
@@ -854,6 +1046,144 @@ def profile_summary(request):
         'daily': daily,
         'dictionaries': dictionaries,
         'extra': {'used_today': extra_used_today, 'limit': EXTRA_NEW_LIMIT},
+    })
+
+
+# ---------------------------------------------------------------------------
+# Insights: retention curve, progress series, rating calibration
+# ---------------------------------------------------------------------------
+
+# 间隔分档：横轴是「上次见面到这次回忆隔了多久」，纵轴是还记得的比例。
+RETENTION_BUCKETS = (
+    (1, 1, '1 天'),
+    (2, 3, '2–3 天'),
+    (4, 7, '4–7 天'),
+    (8, 14, '8–14 天'),
+    (15, 30, '15–30 天'),
+    (31, 60, '31–60 天'),
+    (61, 10 ** 9, '60 天以上'),
+)
+# 一声「记住了」之后不足一小时又被问一次，属于同一轮的重新排队，不是回忆测试。
+CALIBRATION_MIN_GAP = timedelta(hours=1)
+RATING_LABELS = dict(AnswerLog.RATING_CHOICES)
+
+
+@api_view(['GET'])
+def profile_insights(request):
+    error = require_authentication(request)
+    if error:
+        return error
+    days = _clamp_int(request.query_params.get('days'), 7, 371, 180)
+    today = timezone.localdate()
+    start = today - timedelta(days=days - 1)
+    logs = AnswerLog.objects.filter(
+        user=request.user, undone_at__isnull=True, is_practice=False, is_skip=False,
+    )
+    window = logs.filter(created_at__date__gte=start)
+
+    # --- 保持率 -------------------------------------------------------------
+    # interval_before == 0 是第一次见这个词，没有「回忆」可言，必须排除。
+    recall_rows = window.filter(interval_before__gt=0).values('interval_before').annotate(
+        attempts=Count('id'),
+        kept=Count('id', filter=Q(rating__in=('good', 'easy'))),
+    )
+    retention = []
+    for low, high, label in RETENTION_BUCKETS:
+        attempts = 0
+        kept = 0
+        for row in recall_rows:
+            if low <= row['interval_before'] <= high:
+                attempts += row['attempts']
+                kept += row['kept']
+        retention.append({
+            'label': label,
+            'low': low,
+            'high': None if high >= 10 ** 9 else high,
+            'attempts': attempts,
+            'kept': kept,
+            'rate': round(kept / attempts, 4) if attempts else None,
+        })
+
+    # --- 累计进度 -----------------------------------------------------------
+    progress = UserWordProgress.objects.filter(user=request.user)
+    learned_before = progress.filter(
+        first_learned_at__isnull=False, first_learned_at__date__lt=start,
+    ).count()
+    learned_rows = progress.filter(
+        first_learned_at__isnull=False, first_learned_at__date__gte=start,
+    ).annotate(day=TruncDate('first_learned_at')).values('day').annotate(n=Count('id'))
+    learned_by_day = {row['day']: row['n'] for row in learned_rows}
+
+    # “掌握”没有单独时间戳，用第一次把间隔推到 21 天以上的那条作答近似。
+    mastered_by_day = {}
+    mastered_before = 0
+    mastered_rows = (
+        logs.filter(interval_after__gte=MASTERED_INTERVAL_DAYS)
+        .values('word_id').annotate(first=Min('created_at'))
+    )
+    for row in mastered_rows:
+        day = timezone.localtime(row['first']).date()
+        if day < start:
+            mastered_before += 1
+        else:
+            mastered_by_day[day] = mastered_by_day.get(day, 0) + 1
+
+    progress_series = []
+    learned = learned_before
+    mastered = mastered_before
+    for offset in range(days):
+        day = start + timedelta(days=offset)
+        learned += learned_by_day.get(day, 0)
+        mastered += mastered_by_day.get(day, 0)
+        progress_series.append({
+            'date': day.isoformat(),
+            'learned': learned,
+            'mastered': mastered,
+        })
+
+    # --- 评分校准 -----------------------------------------------------------
+    # 把每个词的相邻两次作答配成 (自评, 下次实际)。下次答错说明那次自评偏乐观。
+    rows = list(
+        window.order_by('word_id', 'created_at', 'id')
+        .values_list('word_id', 'rating', 'created_at', 'interval_before')
+    )
+    calib = {rating: {'samples': 0, 'forgotten': 0} for rating in RATINGS}
+    for prev, nxt in zip(rows, rows[1:]):
+        if prev[0] != nxt[0]:
+            continue
+        if nxt[3] <= 0:
+            continue
+        if nxt[2] - prev[2] < CALIBRATION_MIN_GAP:
+            continue
+        bucket = calib[prev[1]]
+        bucket['samples'] += 1
+        if nxt[1] in ('again', 'hard'):
+            bucket['forgotten'] += 1
+
+    calibration = [
+        {
+            'rating': rating,
+            'label': RATING_LABELS[rating],
+            'samples': calib[rating]['samples'],
+            'forgotten': calib[rating]['forgotten'],
+            'forgotten_rate': (
+                round(calib[rating]['forgotten'] / calib[rating]['samples'], 4)
+                if calib[rating]['samples'] else None
+            ),
+        }
+        for rating in RATINGS
+    ]
+
+    return Response({
+        'days': days,
+        'start': start.isoformat(),
+        'retention': retention,
+        'progress': progress_series,
+        'calibration': calibration,
+        'sample': {
+            'recall_answers': sum(row['attempts'] for row in recall_rows),
+            'pairs': sum(item['samples'] for item in calibration),
+        },
     })
 
 

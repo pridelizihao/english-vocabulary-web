@@ -50,6 +50,7 @@ const error = ref('')
 const notice = ref('')
 const importResult = ref<api.ImportSummary | null>(null)
 const profile = ref<api.ProfileSummary | null>(null)
+const insights = ref<api.ProfileInsights | null>(null)
 const mode = ref<Mode>(readStored<Mode>(MODE_KEY, ['card', 'cloze'], 'card'))
 const order = ref<Order>(readStored<Order>(ORDER_KEY, ['core', 'alpha', 'random'], 'core'))
 const bootstrapped = ref(false)
@@ -146,8 +147,54 @@ async function signUp(username: string, password: string) {
   }
 }
 
-async function signOut() {
-  await api.logout().catch(() => undefined)
+async function signInWithEmailCode(email: string, code: string) {
+  loading.value = true
+  clearMessages()
+  try {
+    const result = await api.verifyEmailCode(email, code, 'login')
+    user.value = result.user
+    await loadDictionaries()
+    navigate('/')
+    return true
+  } catch (cause) {
+    setError(cause)
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
+async function bindEmail(email: string, code: string) {
+  clearMessages()
+  try {
+    const result = await api.verifyEmailCode(email, code, 'bind')
+    user.value = result.user
+    notice.value = '邮箱绑定成功，以后可以用它登录、重置密码'
+    return true
+  } catch (cause) {
+    setError(cause)
+    return false
+  }
+}
+
+async function resetPassword(email: string, code: string, password: string) {  loading.value = true
+  clearMessages()
+  try {
+    const result = await api.resetPasswordWithCode(email, code, password)
+    user.value = result.user
+    await loadDictionaries()
+    notice.value = '密码已经重置，以后可以用新密码登录了'
+    navigate('/')
+    return true
+  } catch (cause) {
+    setError(cause)
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
+async function signOut() {  await api.logout().catch(() => undefined)
   user.value = null
   dictionaries.value = []
   resetSession()
@@ -323,6 +370,17 @@ async function loadProfile(days = 30) {
     return null
   } finally {
     loading.value = false
+  }
+}
+
+async function loadInsights(days = 180) {
+  try {
+    insights.value = await api.profileInsights(days)
+    return insights.value
+  } catch (cause) {
+    // 图表是锦上添花，接口挂了不该顶掉整个面板的错误提示。
+    insights.value = null
+    return null
   }
 }
 
@@ -535,6 +593,7 @@ export function useSession() {
     notice,
     importResult,
     profile,
+    insights,
     mode,
     order,
     bootstrapped,
@@ -545,6 +604,9 @@ export function useSession() {
     loadDictionaries,
     signIn,
     signUp,
+    signInWithEmailCode,
+    resetPassword,
+    bindEmail,
     signOut,
     startStudy,
     startReview,
@@ -552,6 +614,7 @@ export function useSession() {
     loadWords,
     loadWord,
     loadProfile,
+    loadInsights,
     rate,
     markKnown,
     undo,

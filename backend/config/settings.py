@@ -96,10 +96,40 @@ CSRF_TRUSTED_ORIGINS = [
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'],
     'DEFAULT_AUTHENTICATION_CLASSES': ['rest_framework.authentication.SessionAuthentication'],
-    'DEFAULT_THROTTLE_RATES': {'auth': os.environ.get('DJANGO_AUTH_THROTTLE_RATE', '10/min')},
+    'DEFAULT_THROTTLE_RATES': {
+        'auth': os.environ.get('DJANGO_AUTH_THROTTLE_RATE', '10/min'),
+        'email_code': os.environ.get('DJANGO_EMAIL_CODE_RATE', '3/min'),
+    },
     'DEFAULT_PARSER_CLASSES': [
         'rest_framework.parsers.JSONParser',
         'rest_framework.parsers.FormParser',
         'rest_framework.parsers.MultiPartParser',
     ],
 }
+
+# --- email (verification codes / password reset) ---------------------------
+# 开发环境默认把邮件打到控制台，不用配 SMTP 也能走完整流程；生产用环境变量
+# 设置 DJANGO_EMAIL_BACKEND=...smtp.EmailBackend 与下面的 HOST/PORT 等。
+_EMAIL_BACKEND_DEFAULT = (
+    'django.core.mail.backends.console.EmailBackend'
+    if DEBUG else
+    'django.core.mail.backends.smtp.EmailBackend'
+)
+EMAIL_BACKEND = os.environ.get('DJANGO_EMAIL_BACKEND', _EMAIL_BACKEND_DEFAULT)
+EMAIL_HOST = os.environ.get('DJANGO_EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.environ.get('DJANGO_EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.environ.get('DJANGO_EMAIL_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('DJANGO_EMAIL_PASSWORD', '')
+EMAIL_USE_TLS = os.environ.get('DJANGO_EMAIL_USE_TLS', '1') == '1'
+EMAIL_USE_SSL = os.environ.get('DJANGO_EMAIL_USE_SSL', '0') == '1'
+EMAIL_TIMEOUT = int(os.environ.get('DJANGO_EMAIL_TIMEOUT', '10'))
+DEFAULT_FROM_EMAIL = os.environ.get(
+    'DJANGO_DEFAULT_FROM_EMAIL', '英语单词记忆 <no-reply@localhost>',
+)
+
+# 验证码有效期 / 冷却 / 频率上限（秒与次数）。
+EMAIL_CODE_TTL_MINUTES = int(os.environ.get('DJANGO_EMAIL_CODE_TTL', '10'))
+EMAIL_CODE_COOLDOWN_SECONDS = int(os.environ.get('DJANGO_EMAIL_CODE_COOLDOWN', '60'))
+EMAIL_CODE_MAX_ATTEMPTS = int(os.environ.get('DJANGO_EMAIL_CODE_MAX_ATTEMPTS', '5'))
+EMAIL_CODE_EMAIL_HOURLY_LIMIT = int(os.environ.get('DJANGO_EMAIL_CODE_EMAIL_HOURLY_LIMIT', '5'))
+EMAIL_CODE_IP_HOURLY_LIMIT = int(os.environ.get('DJANGO_EMAIL_CODE_IP_HOURLY_LIMIT', '20'))

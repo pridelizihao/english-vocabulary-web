@@ -1,12 +1,27 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import * as api from '../api'
 import type { ProfileDay, ProfileDictionary } from '../api'
 import { useSession } from '../composables/useSession'
+import {
+  barRects,
+  calibrationVerdict,
+  downsample,
+  linePath,
+  linePoints,
+  pct,
+  progressScale,
+  ratingHint,
+  retentionVerdict,
+  trimLeadingEmpty,
+} from '../lib/chart'
 import { buildHeatmap, dayLabel, heatLevel, recentDays, WEEKDAY_LABELS } from '../lib/profile'
 import { navigate } from '../lib/router'
 
-const { profile, loading, user, startReview, startWrong } = useSession()
+const {
+  profile, loading, user, startReview, startWrong, insights, loadInsights, bindEmail,
+} = useSession()
 
 const days = computed(() => profile.value?.daily ?? [])
 const heatWrap = ref<HTMLElement | null>(null)
@@ -35,6 +50,89 @@ const weekTotals = computed(() =>
 
 const tooltip = ref<{ x: number; y: number; day: ProfileDay } | null>(null)
 
+// --- 保持率 / 进度 / 评分校准 ---------------------------------------------
+const CHART_WIDTH = 640
+const CHART_HEIGHT = 170
+
+const retention = computed(() => insights.value?.retention ?? [])
+const retentionRects = computed(() =>
+  barRects(retention.value.map((bucket) => bucket.rate), CHART_WIDTH, CHART_HEIGHT),
+)
+const retentionText = computed(() => retentionVerdict(retention.value))
+const hasRetention = computed(() => retention.value.some((bucket) => bucket.attempts > 0))
+
+const progressPoints = computed(() => downsample(trimLeadingEmpty(insights.value?.progress ?? []), 80))
+const hasProgress = computed(() => progressPoints.value.some((point) => point.learned > 0 || point.mastered > 0))
+const progressTop = computed(() => progressScale(progressPoints.value))
+const learnedPath = computed(() =>
+  linePath(linePoints(progressPoints.value.map((point) => point.learned), CHART_WIDTH, CHART_HEIGHT, progressTop.value)),
+)
+const masteredPath = computed(() =>
+  linePath(linePoints(progressPoints.value.map((point) => point.mastered), CHART_WIDTH, CHART_HEIGHT, progressTop.value)),
+)
+const progressFirst = computed(() => progressPoints.value[0]?.date ?? '')
+const progressLast = computed(() => progressPoints.value[progressPoints.value.length - 1]?.date ?? '')
+const learnedTotal = computed(() => progressPoints.value[progressPoints.value.length - 1]?.learned ?? 0)
+const masteredTotal = computed(() => progressPoints.value[progressPoints.value.length - 1]?.mastered ?? 0)
+
+const calibration = computed(() => insights.value?.calibration ?? [])
+const calibrationText = computed(() => calibrationVerdict(calibration.value))
+const calibrationSamples = computed(() => insights.value?.sample.pairs ?? 0)
+
+// --- 绑定邮箱 -------------------------------------------------------------
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const emailInput = ref('')
+const emailCode = ref('')
+const emailSending = ref(false)
+const emailCooldown = ref(0)
+const emailError = ref('')
+let emailTimer: number | null = null
+
+const emailValid = computed(() => EMAIL_RE.test(emailInput.value.trim()))
+const emailCodeValid = computed(() => /^\d{6}$/.test(emailCode.value.trim()))
+
+function stopEmailTimer() {
+  if (emailTimer !== null) {
+    window.clearInterval(emailTimer)
+    emailTimer = null
+  }
+}
+
+async function sendBindCode() {
+  emailError.value = ''
+  if (!emailValid.value) {
+    emailError.value = '请输入正确的邮箱地址'
+    return
+  }
+  emailSending.value = true
+  try {
+    const result = await api.sendEmailCode(emailInput.value.trim(), 'bind')
+    stopEmailTimer()
+    emailCooldown.value = Math.max(1, Math.round(result.retry_after))
+    emailTimer = window.setInterval(() => {
+      emailCooldown.value -= 1
+      if (emailCooldown.value <= 0) stopEmailTimer()
+    }, 1000)
+  } catch (cause) {
+    emailError.value = cause instanceof Error ? cause.message : '验证码发送失败，请稍后重试'
+  } finally {
+    emailSending.value = false
+  }
+}
+
+async function confirmBind() {
+  emailError.value = ''
+  if (!emailCodeValid.value) {
+    emailError.value = '验证码是 6 位数字'
+    return
+  }
+  const ok = await bindEmail(emailInput.value.trim(), emailCode.value.trim())
+  if (ok) {
+    emailInput.value = ''
+    emailCode.value = ''
+  }
+}
+
 let observer: ResizeObserver | null = null
 
 onMounted(() => {
@@ -42,8 +140,12 @@ onMounted(() => {
     observer = new ResizeObserver(() => measureHeatmap())
   }
   nextTick(measureHeatmap)
+  loadInsights(180)
 })
-onBeforeUnmount(() => observer?.disconnect())
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  stopEmailTimer()
+})
 
 watch(heatWrap, (element) => {
   if (element && observer) observer.observe(element)
@@ -128,6 +230,48 @@ function review(item: ProfileDictionary) {
 
       <section class="panel profile-panel">
         <header class="profile-panel-head">
+          <strong>账号邮箱</strong>
+          <span class="muted">用于验证码登录和找回密码</span>
+        </header>
+
+        <p v-if="user?.email" class="muted email-bound">
+          已绑定 <strong>{{ user.email }}</strong>，忘记密码时可以用它收验证码。
+        </p>
+        <template v-else>
+          <p class="muted email-bound">
+            还没绑定邮箱。绑定后可以用邮箱验证码登录，忘记密码也能自己重置，不用找人帮忙。
+          </p>
+          <form class="bind-form" @submit.prevent="confirmBind">
+            <div class="code-row">
+              <input v-model="emailInput" type="email" placeholder="邮箱地址" required />
+              <button
+                type="button"
+                class="code-button"
+                :disabled="emailSending || emailCooldown > 0"
+                @click="sendBindCode"
+              >
+                {{ emailSending ? '发送中…' : emailCooldown > 0 ? `${emailCooldown} 秒后重发` : '发送验证码' }}
+              </button>
+            </div>
+            <input
+              v-model="emailCode"
+              class="bind-code"
+              inputmode="numeric"
+              maxlength="6"
+              pattern="\d{6}"
+              placeholder="6 位验证码"
+              required
+            />
+            <button class="primary wide" type="submit" :disabled="!emailValid || !emailCodeValid || loading">
+              绑定邮箱
+            </button>
+            <p v-if="emailError" class="error inline">{{ emailError }}</p>
+          </form>
+        </template>
+      </section>
+
+      <section class="panel profile-panel">
+        <header class="profile-panel-head">
           <strong>学习热力图</strong>
           <span class="heat-legend">
             少
@@ -181,6 +325,111 @@ function review(item: ProfileDictionary) {
           <br />
           最近 7 天：答题 {{ weekTotals.answers }} · 新词 {{ weekTotals.new }} · 复习 {{ weekTotals.review }}
           <template v-if="weekTotals.practice"> · 练习 {{ weekTotals.practice }}</template>
+        </p>
+      </section>
+
+      <section class="panel profile-panel">
+        <header class="profile-panel-head">
+          <strong>记忆保持率</strong>
+          <span class="muted">按「上次见面 → 这次回忆」的间隔分档</span>
+        </header>
+
+        <template v-if="hasRetention">
+          <div class="chart-wrap">
+            <svg
+              class="chart"
+              :viewBox="`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`"
+              role="img"
+              aria-label="不同间隔下的保持率"
+            >
+              <rect
+                v-for="rect in retentionRects"
+                :key="rect.index"
+                :x="rect.x"
+                :y="rect.filled ? rect.y : CHART_HEIGHT - 2"
+                :width="rect.width"
+                :height="rect.filled ? Math.max(rect.height, 2) : 2"
+                rx="4"
+                :class="rect.filled ? 'chart-bar' : 'chart-bar is-empty'"
+              />
+            </svg>
+            <div class="chart-axis">
+              <div v-for="bucket in retention" :key="bucket.label" class="chart-tick">
+                <b>{{ pct(bucket.rate) }}</b>
+                <span>{{ bucket.label }}</span>
+                <em>{{ bucket.attempts ? `${bucket.attempts} 次` : '—' }}</em>
+              </div>
+            </div>
+          </div>
+          <p class="chart-note" :class="`tone-${retentionText.tone}`">{{ retentionText.text }}</p>
+        </template>
+        <p v-else class="muted">
+          还没有足够的复习记录。等你把第一批词放下几天再回来，这里会显示记忆能撑多久。
+        </p>
+      </section>
+
+      <section class="panel profile-panel">
+        <header class="profile-panel-head">
+          <strong>累计进度</strong>
+          <span class="chart-legend">
+            <i class="dot learned"></i>已学 {{ learnedTotal }}
+            <i class="dot mastered"></i>已掌握 {{ masteredTotal }}
+          </span>
+        </header>
+
+        <template v-if="hasProgress">
+          <div class="chart-wrap">
+            <span class="chart-y top">{{ progressTop }}</span>
+            <span class="chart-y bottom">0</span>
+            <svg
+              class="chart"
+              :viewBox="`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`"
+              role="img"
+              aria-label="累计已学与已掌握单词数"
+            >
+              <path :d="learnedPath" class="chart-line learned" />
+              <path :d="masteredPath" class="chart-line mastered" />
+            </svg>
+            <div class="chart-axis is-spread">
+              <span>{{ progressFirst }}</span>
+              <span>{{ progressLast }}</span>
+            </div>
+          </div>
+        </template>
+        <p v-else class="muted">还没有学习记录。</p>
+      </section>
+
+      <section class="panel profile-panel">
+        <header class="profile-panel-head">
+          <strong>评分校准</strong>
+          <span class="muted">自评 vs 下次实际表现</span>
+        </header>
+
+        <template v-if="calibrationSamples">
+          <table class="calibration-table">
+            <thead>
+              <tr>
+                <th>你点的</th>
+                <th>次数</th>
+                <th>下次忘了</th>
+                <th>判断</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in calibration" :key="row.rating">
+                <td>{{ row.label }}</td>
+                <td>{{ row.samples || '—' }}</td>
+                <td>
+                  <span class="rate-value">{{ pct(row.forgotten_rate) }}</span>
+                </td>
+                <td class="calibration-hint">{{ ratingHint(row) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="chart-note" :class="`tone-${calibrationText.tone}`">{{ calibrationText.text }}</p>
+        </template>
+        <p v-else class="muted">
+          同一个词被复习两次以上之后，这里会显示你的评分尺度准不准。
         </p>
       </section>
 

@@ -4,7 +4,8 @@ __pycache__/
 .venv/
 .env
 node_modules/
-dist/
+# frontend/dist 故意入库：部署机不装 Node 构建链，`git pull` 直接拿到前端产物。
+frontend/dist/node_modules/
 backend/staticfiles/
 .tmp/
 .tmpdir/
