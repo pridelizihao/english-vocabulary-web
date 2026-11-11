@@ -33,6 +33,7 @@ const {
   startWrong,
   loadProfile,
   rate,
+  markKnown,
   undo,
   canUndo,
   loadDone,
@@ -176,6 +177,7 @@ function onWrong() {
       :can-undo="canUndo"
       @rate="rate"
       @undo="undo"
+      @known="markKnown"
       @back="goDictionaries"
       @update:mode="handleMode"
     />

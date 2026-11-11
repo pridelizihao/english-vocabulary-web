@@ -10,7 +10,7 @@ import {
 } from '../lib/study'
 
 type Mode = 'card' | 'cloze'
-type Order = 'alpha' | 'random'
+type Order = 'core' | 'alpha' | 'random'
 type LastAnswer = {
   logId: number
   index: number
@@ -51,7 +51,7 @@ const notice = ref('')
 const importResult = ref<api.ImportSummary | null>(null)
 const profile = ref<api.ProfileSummary | null>(null)
 const mode = ref<Mode>(readStored<Mode>(MODE_KEY, ['card', 'cloze'], 'card'))
-const order = ref<Order>(readStored<Order>(ORDER_KEY, ['alpha', 'random'], 'alpha'))
+const order = ref<Order>(readStored<Order>(ORDER_KEY, ['core', 'alpha', 'random'], 'core'))
 const bootstrapped = ref(false)
 const lastAnswer = ref<LastAnswer | null>(null)
 const answerToken = ref('')
@@ -380,6 +380,57 @@ async function importPersonal(name: string, file: File) {
   }
 }
 
+async function markKnown() {
+  const item = currentItem.value
+  if (!item || loading.value || item.kind === 'practice') return false
+  const position = index.value
+  const lengthBefore = queue.value.length
+  const token = answerToken.value || randomToken()
+  answerToken.value = token
+  loading.value = true
+  clearError()
+  try {
+    const result = await api.answer(item.word.id, 'easy', { clientToken: token, known: true })
+    answerToken.value = ''
+    if (result.answer_log_id) {
+      lastAnswer.value = {
+        logId: result.answer_log_id,
+        index: position,
+        queueLength: lengthBefore,
+        rating: 'easy',
+      }
+    }
+    completed.value += 1
+    notice.value = '已标记为掌握，一年后复习'
+    if (stats.value) {
+      const isNew = item.kind === 'new' && item.repeats === 0
+      const learned = stats.value.learned_words + (isNew ? 1 : 0)
+      stats.value = {
+        ...stats.value,
+        learned_words: learned,
+        today_new: stats.value.today_new + (isNew ? 1 : 0),
+        today_completed: stats.value.today_completed + 1,
+        remaining_new: Math.max(stats.value.remaining_new - (isNew ? 1 : 0), 0),
+        progress_percent: stats.value.total_words
+          ? Math.round((learned / stats.value.total_words) * 1000) / 10
+          : 0,
+      }
+    }
+    if (position + 1 >= queue.value.length) {
+      stats.value = await api.statistics(item.word.dictionary)
+      navigate(`/done/${item.word.dictionary}`)
+    } else {
+      index.value = position + 1
+    }
+    return true
+  } catch (cause) {
+    setError(cause)
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
 async function undo() {
   const snapshot = lastAnswer.value
   if (!snapshot || loading.value) return false
@@ -502,6 +553,7 @@ export function useSession() {
     loadWord,
     loadProfile,
     rate,
+    markKnown,
     undo,
     loadDone,
     deleteDictionary,

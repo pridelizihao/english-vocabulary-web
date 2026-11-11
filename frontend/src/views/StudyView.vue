@@ -34,6 +34,7 @@ const emit = defineEmits<{
   (event: 'rate', rating: Rating): void
   (event: 'back'): void
   (event: 'undo'): void
+  (event: 'known'): void
   (event: 'update:mode', mode: 'card' | 'cloze'): void
 }>()
 
@@ -427,6 +428,12 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </section>
+
+    <div v-if="item.kind !== 'practice'" class="known-row">
+      <button class="link-button known-button" :disabled="loading" @click="emit('known')">
+        我已经会了，标为掌握
+      </button>
+    </div>
 
     <p v-if="mode === 'card'" class="keyboard-hint muted">
       快捷键：<kbd>空格</kbd> 看答案 · <kbd>1</kbd>–<kbd>4</kbd> 评分 · <kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销

@@ -29,7 +29,16 @@ MAX_INTERVAL_DAYS = 365
 # An answer can be undone only within this window (see views.undo_answer).
 UNDO_WINDOW_MINUTES = 10
 RATINGS = ('again', 'hard', 'good', 'easy')
-WORD_FIELDS = ('spelling', 'phonetic', 'part_of_speech', 'meaning', 'example', 'example_translation', 'audio_url')
+CEFR_LEVELS = ('A1', 'A2', 'B1', 'B2', 'C1', 'C2')
+WORD_FIELDS = (
+    'spelling', 'phonetic', 'part_of_speech', 'meaning', 'example',
+    'example_translation', 'audio_url', 'cefr', 'is_proper',
+)
+
+
+def normalise_cefr(value):
+    text = (value or '').strip().upper()
+    return text if text in CEFR_LEVELS else ''
 
 
 class ImportFileError(ValueError):
@@ -255,6 +264,8 @@ def import_words(dictionary, rows):
             'example': row.get('example', '')[:2000],
             'example_translation': (row.get('example_translation') or row.get('example_zh') or '')[:2000],
             'audio_url': row.get('audio_url', ''),
+            'cefr': normalise_cefr(row.get('cefr', '')),
+            'is_proper': spelling != spelling.lower(),
         }
         if key in prepared:
             # keep the richest variant when a file repeats a word in different case

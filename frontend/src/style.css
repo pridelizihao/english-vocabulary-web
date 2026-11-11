@@ -1612,3 +1612,16 @@ label {
   font-size: 13px;
   color: var(--muted);
 }
+.known-row {
+  margin-top: 14px;
+  text-align: center;
+}
+
+.known-button {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.known-button:hover {
+  color: var(--brand-strong);
+}

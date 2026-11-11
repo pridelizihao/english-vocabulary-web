@@ -22,7 +22,7 @@ const localError = ref('')
 const confirmingId = ref<number | null>(null)
 const deletingId = ref<number | null>(null)
 
-function setOrder(value: 'alpha' | 'random') {
+function setOrder(value: 'core' | 'alpha' | 'random') {
   order.value = value
 }
 
@@ -89,10 +89,13 @@ function downloadTemplate() {
           每日新词上限 20 个，到期复习会优先排队。已经掌握的词会自动拉开间隔，不必再手动安排。
         </p>
       </div>
-      <div class="order-switch" role="group" aria-label="出题顺序">
-        <span class="muted">出题顺序</span>
+      <div class="order-switch" role="group" aria-label="新词顺序" title="考试核心：按 CEFR 等级优先 B1/B2，专有名词排最后">
+        <span class="muted">新词顺序</span>
+        <button :class="{ active: order === 'core' }" :aria-pressed="order === 'core'" @click="setOrder('core')">
+          考试核心
+        </button>
         <button :class="{ active: order === 'alpha' }" :aria-pressed="order === 'alpha'" @click="setOrder('alpha')">
-          字母顺序
+          字母
         </button>
         <button :class="{ active: order === 'random' }" :aria-pressed="order === 'random'" @click="setOrder('random')">
           乱序

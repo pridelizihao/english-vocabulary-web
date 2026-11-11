@@ -5,6 +5,7 @@ export type RatingPreview = Record<Rating, string>
 export type WordFilter = 'all' | 'new' | 'learning' | 'mastered' | 'due' | 'wrong'
 export type WordSort = 'alpha' | 'recent' | 'due' | 'wrong'
 export type ProgressStatus = 'new' | 'learning' | 'mastered'
+export type StudyOrder = 'core' | 'alpha' | 'random'
 
 export type User = { id: number; username: string; is_staff: boolean }
 
@@ -59,6 +60,7 @@ export type AnswerResult = Progress & {
   is_extra?: boolean
   answer_log_id?: number
   duplicate?: boolean
+  is_skip?: boolean
 }
 
 export type StudyToday = {
@@ -307,19 +309,19 @@ export async function deleteDictionary(dictionaryId: number) {
   })
 }
 
-export async function studyToday(dictionaryId: number, order: 'alpha' | 'random', extra = 0) {
+export async function studyToday(dictionaryId: number, order: StudyOrder, extra = 0) {
   const suffix = extra > 0 ? `&extra=${extra}` : ''
   return request<StudyToday>(`/study/today?dictionary_id=${dictionaryId}&order=${order}${suffix}`)
 }
 
-export async function reviewToday(dictionaryId: number, order: 'alpha' | 'random') {
+export async function reviewToday(dictionaryId: number, order: StudyOrder) {
   return request<ReviewToday>(`/review/today?dictionary_id=${dictionaryId}&order=${order}`)
 }
 
 export async function answer(
   wordId: number,
   rating: Rating,
-  options: { practice?: boolean; clientToken?: string } = {},
+  options: { practice?: boolean; clientToken?: string; known?: boolean } = {},
 ) {
   await ensureCsrf()
   return request<AnswerResult>(`/study/${wordId}/answer`, {
@@ -328,6 +330,7 @@ export async function answer(
       rating,
       practice: Boolean(options.practice),
       ...(options.clientToken ? { client_token: options.clientToken } : {}),
+      ...(options.known ? { known: true } : {}),
     }),
     headers: csrfHeaders(),
   })

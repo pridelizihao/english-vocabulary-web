@@ -47,6 +47,11 @@ class Word(models.Model):
     pronunciation_url = models.URLField(blank=True)
     part_of_speech = models.CharField(max_length=80, blank=True)
     meaning = models.TextField()
+    # CEFR level (A1/A2/B1/B2/C1) from the Oxford 3000/5000 lists; empty when
+    # the word is not in those lists. Used to order new words by exam value.
+    cefr = models.CharField(max_length=2, blank=True, default='')
+    # Months, weekdays and names ("April", "AIDS") sort last in the core order.
+    is_proper = models.BooleanField(default=False)
     example = models.TextField(blank=True)
     example_translation = models.TextField(blank=True)
     audio_url = models.URLField(blank=True)
@@ -119,6 +124,8 @@ class AnswerLog(models.Model):
     is_new = models.BooleanField(default=False)
     is_extra = models.BooleanField(default=False)
     is_practice = models.BooleanField(default=False)
+    # "I already know this word": jumps straight to mastered (365 days).
+    is_skip = models.BooleanField(default=False)
     interval_before = models.PositiveIntegerField(default=0)
     interval_after = models.PositiveIntegerField(default=0)
     # Snapshot of the progress row *before* this answer, so the answer can be

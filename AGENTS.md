@@ -19,8 +19,8 @@ backend/                       Django 项目
     serializers.py             输出结构，含每个词的 preview 间隔文案
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
-    management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples
-    tests.py                   后端用例（当前 51 个）
+    management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples / annotate_cefr
+    tests.py                   后端用例（当前 57 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
@@ -91,6 +91,8 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - **幂等**：作答可带 `client_token`（前端每次作答生成），同一用户同一 token 只落一条流水，重复请求返回 `duplicate: true` 且不再推进间隔。
 - **统计口径**：`statistics.today_completed` = 今日**非练习**答题条数；所有统计（个人面板、额外新词用量、答题历史）都必须排除 `undone_at` 非空的记录。
 - **错词**：`wrong_count > 0` 即错词；错词练习走 `practice` 通道，只记录不改间隔。
+- **新词顺序**：默认 `core`：CEFR 等级 B1 → B2 → C1 → 未收录 → A2 → A1，`is_proper`（月份、人名、缩写）永远最后；另外支持 `alpha` / `random`。CEFR 来自 `data/sources/Oxford.json`，CSV 的 `cefr` 列或 `annotate_cefr` 命令写入。
+- **标记已会**：作答时带 `known: true` 直接把词设为 `mastered`、间隔 365 天，日志记 `is_skip=True`（rating 固定 `easy`）；撤销同样按快照恢复。
 - **个人词典**：`Dictionary.owner` 非空即个人词典；列表/详情/enroll/统计/答题共用同一可见性判断（官方 + 自己的）。
 - **单词唯一**：`(dictionary, Lower(spelling))`，`Abandon` 与 `abandon` 是同一个词，导入时合并。
 - **例句**：`Word.example` 是英文例句，`Word.example_translation` 是中文翻译；批量填充只走 `enrich_examples`（数据源 `data/examples.json`），不要在教学流程里现生成。
@@ -118,11 +120,11 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 | POST | `/api/dictionaries/{id}/enroll` | 开始学习（幂等） |
 | POST | `/api/dictionaries/import` | 导入个人词典（同名幂等，仅自己可见） |
 | POST | `/api/admin/dictionaries/import` | 管理员导入到指定词典 |
-| GET | `/api/study/today?dictionary_id=&order=alpha\|random` | 今日新词（受预算限制） |
+| GET | `/api/study/today?dictionary_id=&order=core\|alpha\|random` | 今日新词（受预算限制，默认 core） |
 | GET | `/api/review/today?dictionary_id=` | 到期复习 |
 | GET | `/api/review/early?dictionary_id=&order=weak\|due\|random&limit=` | 提前复习（练习，不改 SRS） |
 | GET | `/api/review/wrong?dictionary_id=&limit=&order=wrong\|recent` | 错词列表（练习用） |
-| POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?, client_token?}`，practice 只记录不改间隔 |
+| POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?, client_token?, known?}`；practice 只记录，known 直接标掌握（365 天） |
 | POST | `/api/answers/{log_id}/undo` | 撤销最近一次作答（10 分钟内） |
 | GET | `/api/profile/summary?days=371` | 个人学习面板：每日/连续天数/按词典（days 支持 7–371） |
 | GET | `/api/statistics?dictionary_id=` | 进度、掌握数、待复习、下次复习时间 |
@@ -143,7 +145,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 51 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 57 个）。
 - 改填空/SRS/热力图/朗读/词表 → 改 `frontend/tests/*.test.mjs`（当前 34 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
@@ -156,6 +158,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**；生产走的是原生部署（nginx + gunicorn + systemd），步骤见 `docs/deploy.md`，已在 Ubuntu 24.04 上跑通。
 - 单词发音顺序是「词典自带 `audio_url` → 系统英文语音（Web Speech API）→ 有道在线发音」；本地语音最多等 900ms，失败就切在线。换词时 `prefetch()` 预载音频，播放器按 URL 缓存，第二次播放基本瞬时。卡片、填空和词详情都有「🔊 朗读」按钮；在线发音会把单词发到 `dict.youdao.com`，没有英文语音包时靠它兜底。
 - 词表来源见 `data/sources/README.md`，商用前需确认上游授权。
+- CEFR 只覆盖 Oxford 3000/5000 的 5062 个词；CET 词表里约 1/3 查不到等级，这些词在 core 顺序里排在 C1 之后、A2 之前。要更准的顺序需要引入词频数据。
 - SQLite 单文件；要上多实例/高并发前先换 PostgreSQL，并把 `db.sqlite3` 从仓库外备份策略里接进来。
 
 ## 10. 踩坑清单

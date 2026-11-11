@@ -761,3 +761,121 @@ class StatisticsConsistencyTests(ApiTestCase):
         self.assertEqual(profile['today']['practice'], 1)
         self.assertEqual(stats['wrong_words'], 1)
 
+class CoreOrderTests(ApiTestCase):
+    def test_core_order_prefers_exam_levels_and_pushes_proper_nouns_last(self):
+        Word.objects.all().delete()
+        specs = [
+            ('access', 'B1', False),
+            ('achieve', 'B2', False),
+            ('abolish', 'C1', False),
+            ('relic', '', False),
+            ('apple', 'A1', False),
+            ('AIDS', '', True),
+        ]
+        for spelling, level, proper in specs:
+            Word.objects.create(
+                dictionary=self.dictionary, spelling=spelling, meaning='x', cefr=level, is_proper=proper,
+            )
+        self.login()
+        self.enroll()
+        expected = ['access', 'achieve', 'abolish', 'relic', 'apple', 'AIDS']
+        core = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}&order=core').data
+        self.assertEqual([item['spelling'] for item in core['words']], expected)
+        # core is the default when no order is given
+        default = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}').data
+        self.assertEqual([item['spelling'] for item in default['words']], expected)
+
+        alpha = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}&order=alpha').data
+        self.assertEqual([item['spelling'] for item in alpha['words']], sorted(expected))
+
+
+class CefrImportTests(ApiTestCase):
+    def test_import_reads_cefr_and_marks_proper_nouns(self):
+        self.login('admin')
+        content = 'word,meaning,cefr\naccess,进入,B1\nAIDS,艾滋病,\nbroken,坏,X9\n'
+        response = self.upload('cefr.csv', content.encode('utf-8'))
+        self.assertEqual(response.status_code, 200, response.data)
+
+        access = Word.objects.get(dictionary=self.dictionary, spelling='access')
+        self.assertEqual(access.cefr, 'B1')
+        self.assertFalse(access.is_proper)
+
+        aids = Word.objects.get(dictionary=self.dictionary, spelling='AIDS')
+        self.assertEqual(aids.cefr, '')
+        self.assertTrue(aids.is_proper)
+
+        broken = Word.objects.get(dictionary=self.dictionary, spelling='broken')
+        self.assertEqual(broken.cefr, '')
+
+
+class KnownWordTests(ApiTestCase):
+    def test_known_marks_mastered_and_undo_restores(self):
+        self.login()
+        self.enroll()
+        response = self.client.post(
+            f'/api/study/{self.words[0].id}/answer', {'rating': 'good', 'known': True}, format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['interval_days'], 365)
+        self.assertEqual(response.data['status'], 'mastered')
+        self.assertTrue(response.data['is_skip'])
+        self.assertEqual(response.data['next_review_label'], '一年后')
+
+        log = AnswerLog.objects.get(user=self.user, word=self.words[0])
+        self.assertTrue(log.is_skip)
+        self.assertEqual(log.rating, 'easy')
+        self.assertEqual(log.interval_after, 365)
+
+        undo = self.client.post(f"/api/answers/{response.data['answer_log_id']}/undo")
+        self.assertEqual(undo.status_code, 200, undo.data)
+        self.assertFalse(UserWordProgress.objects.filter(user=self.user, word=self.words[0]).exists())
+
+    def test_known_after_review_restores_previous_interval(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        response = self.client.post(
+            f'/api/study/{self.words[0].id}/answer', {'rating': 'good', 'known': True}, format='json',
+        )
+        self.assertEqual(response.data['interval_days'], 365)
+        progress = UserWordProgress.objects.get(user=self.user, word=self.words[0])
+        self.assertEqual(progress.review_count, 2)
+
+        self.client.post(f"/api/answers/{response.data['answer_log_id']}/undo")
+        progress.refresh_from_db()
+        self.assertEqual(progress.interval_days, 1)
+        self.assertEqual(progress.status, 'learning')
+
+    def test_known_rejects_practice(self):
+        self.login()
+        self.enroll()
+        response = self.client.post(
+            f'/api/study/{self.words[0].id}/answer',
+            {'rating': 'good', 'known': True, 'practice': True},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], '练习模式不能标记为已掌握')
+
+
+class AnnotateCefrTests(ApiTestCase):
+    def test_command_backfills_levels_and_proper_flag(self):
+        Word.objects.create(dictionary=self.dictionary, spelling='access', meaning='x')
+        Word.objects.create(dictionary=self.dictionary, spelling='April', meaning='x')
+        payload = {
+            'Oxford3000': {'access': {'B1': [['v.']]}, 'April': {'A1': [['n.']]}},
+            'Oxford5000': {},
+        }
+        handle = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8')
+        json.dump(payload, handle, ensure_ascii=False)
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+
+        call_command('annotate_cefr', file=handle.name, stdout=io.StringIO())
+
+        access = Word.objects.get(dictionary=self.dictionary, spelling='access')
+        april = Word.objects.get(dictionary=self.dictionary, spelling='April')
+        self.assertEqual(access.cefr, 'B1')
+        self.assertFalse(access.is_proper)
+        self.assertEqual(april.cefr, 'A1')
+        self.assertTrue(april.is_proper)

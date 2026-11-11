@@ -6,7 +6,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Count, F, OuterRef, Q, Subquery
+from django.db.models import Case, Count, F, OuterRef, Q, Subquery, When
 from django.db.models.functions import TruncDate
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -44,6 +44,11 @@ WORDS_MAX_PAGE_SIZE = 200
 WRONG_WORDS_LIMIT = 50
 WORD_LIST_FILTERS = ('all', 'new', 'learning', 'mastered', 'due', 'wrong')
 WORD_LIST_SORTS = ('alpha', 'recent', 'due', 'wrong')
+# Core order: B1/B2 first (the CET core), then C1, then words outside the
+# Oxford lists, then easy A2/A1 words; proper nouns always last.
+STUDY_ORDERS = ('core', 'alpha', 'random')
+CORE_LEVEL_RANKS = {'B1': 0, 'B2': 1, 'C1': 2, 'A2': 4, 'A1': 5}
+CORE_LEVEL_DEFAULT = 3
 UNDO_WINDOW = timedelta(minutes=UNDO_WINDOW_MINUTES)
 
 
@@ -268,6 +273,7 @@ def _answer_history(user, word, limit=10):
             'interval_before': log.interval_before,
             'interval_after': log.interval_after,
             'is_practice': log.is_practice,
+            'is_skip': log.is_skip,
         }
         for log in logs
     ]
@@ -298,10 +304,11 @@ def _duplicate_answer_payload(log):
         payload['preview'] = preview_intervals(progress)
     else:
         payload = ProgressSerializer(progress).data if progress else {}
-        payload['next_review_label'] = describe_interval(log.interval_after, log.rating)
+        payload['next_review_label'] = '一年后' if log.is_skip else describe_interval(log.interval_after, log.rating)
         payload['preview'] = preview_intervals(progress)
         payload['is_new'] = log.is_new
         payload['is_extra'] = log.is_extra
+        payload['is_skip'] = log.is_skip
     payload['answer_log_id'] = log.id
     payload['duplicate'] = True
     return payload
@@ -416,8 +423,19 @@ def today_study(request):
     budget = base_left + extra_budget
 
     remaining = Word.objects.filter(dictionary=dictionary).exclude(id__in=progress.values('word_id'))
-    if request.query_params.get('order') == 'random':
+    order = request.query_params.get('order', 'core')
+    if order not in STUDY_ORDERS:
+        order = 'core'
+    if order == 'random':
         remaining = remaining.order_by('?')
+    elif order == 'core':
+        remaining = remaining.annotate(
+            proper_rank=Case(When(is_proper=True, then=1), default=0),
+            level_rank=Case(
+                *[When(cefr=level, then=rank) for level, rank in CORE_LEVEL_RANKS.items()],
+                default=CORE_LEVEL_DEFAULT,
+            ),
+        ).order_by('proper_rank', 'level_rank', 'spelling', 'id')
     else:
         remaining = remaining.order_by('spelling', 'id')
     words = list(remaining[:budget]) if budget else []
@@ -476,6 +494,12 @@ def answer_word(request, word_id):
     if rating not in RATINGS:
         return fail('rating 只能是 again / hard / good / easy')
     practice = bool(request.data.get('practice'))
+    known = bool(request.data.get('known'))
+    if known and practice:
+        return fail('练习模式不能标记为已掌握')
+    if known:
+        # Marking a word as known always records an "easy" answer.
+        rating = 'easy'
     token = (request.data.get('client_token') or '').strip()[:64]
     today = timezone.localdate()
 
@@ -512,14 +536,25 @@ def answer_word(request, word_id):
             ).count()
             is_extra = bool(created and new_today_before >= NEW_WORD_LIMIT)
             interval_before = progress.interval_days
-            schedule(progress, rating)
+            if known:
+                now = timezone.now()
+                progress.status = 'mastered'
+                progress.interval_days = 365
+                progress.review_count += 1
+                progress.streak = max(progress.streak, 1)
+                progress.last_review_at = now
+                progress.next_review_at = now + timedelta(days=365)
+                if progress.first_learned_at is None:
+                    progress.first_learned_at = now
+            else:
+                schedule(progress, rating)
             progress.save(update_fields=[
                 'status', 'review_count', 'wrong_count', 'streak', 'ease',
                 'next_review_at', 'last_review_at', 'first_learned_at', 'interval_days',
             ])
             log = AnswerLog.objects.create(
                 user=request.user, word=word, dictionary=word.dictionary, rating=rating,
-                is_new=created, is_extra=is_extra, interval_before=interval_before,
+                is_new=created, is_extra=is_extra, is_skip=known, interval_before=interval_before,
                 interval_after=progress.interval_days, state_before=snapshot, client_token=token,
             )
     except IntegrityError:
@@ -530,10 +565,11 @@ def answer_word(request, word_id):
         return Response(_duplicate_answer_payload(existing))
 
     payload = ProgressSerializer(progress).data
-    payload['next_review_label'] = describe_interval(progress.interval_days, rating)
+    payload['next_review_label'] = '一年后' if known else describe_interval(progress.interval_days, rating)
     payload['preview'] = preview_intervals(progress)
     payload['is_new'] = created
     payload['is_extra'] = is_extra
+    payload['is_skip'] = known
     payload['answer_log_id'] = log.id
     return Response(payload)
 

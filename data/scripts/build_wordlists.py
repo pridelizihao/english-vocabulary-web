@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "data" / "sources"
 OUT = ROOT / "data" / "imports"
 EXAMPLES = ROOT / "data" / "examples.json"
+OXFORD = SOURCES / "Oxford.json"
 
 
 def meaning_text(entry):
@@ -25,6 +26,25 @@ def meaning_text(entry):
     return "; ".join(dict.fromkeys(parts))
 
 
+def load_cefr():
+    if not OXFORD.exists():
+        return {}, {}
+    payload = json.loads(OXFORD.read_text(encoding="utf-8"))
+    exact, lower = {}, {}
+    for section in ("Oxford3000", "Oxford5000"):
+        for word, entry in payload.get(section, {}).items():
+            if not entry:
+                continue
+            level = next(iter(entry))
+            exact.setdefault(word, level)
+            lower.setdefault(word.lower(), level)
+    return exact, lower
+
+
+def cefr_of(word, exact, lower):
+    return exact.get(word) or lower.get(word.lower()) or ""
+
+
 def load_examples():
     if not EXAMPLES.exists():
         return {}, {}
@@ -34,7 +54,7 @@ def load_examples():
     return words, by_lower
 
 
-def build(name, words, definitions, examples, examples_ci):
+def build(name, words, definitions, examples, examples_ci, cefr_exact, cefr_lower):
     OUT.mkdir(parents=True, exist_ok=True)
     rows = []
     for word in sorted(set(words), key=str.casefold):
@@ -53,12 +73,13 @@ def build(name, words, definitions, examples, examples_ci):
             "example": (example.get("example") or "").strip(),
             "example_translation": (example.get("zh") or "").strip(),
             "audio_url": "",
+            "cefr": cefr_of(key, cefr_exact, cefr_lower),
         })
     path = OUT / name
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]) if rows else [
             "word", "phonetic", "part_of_speech", "meaning",
-            "example", "example_translation", "audio_url",
+            "example", "example_translation", "audio_url", "cefr",
         ])
         writer.writeheader()
         writer.writerows(rows)
@@ -69,10 +90,11 @@ def main():
     cet = json.loads((SOURCES / "CET.json").read_text(encoding="utf-8"))
     definitions = json.loads((SOURCES / "definitions.full.json").read_text(encoding="utf-8"))
     examples, examples_ci = load_examples()
+    cefr_exact, cefr_lower = load_cefr()
     cet4 = sorted(cet["CET4"], key=str.casefold)
     combined = sorted(set(cet["CET4"]) | set(cet["CET6"]), key=str.casefold)
     for filename, words in (("cet4_core_3500.csv", cet4[:3500]), ("cet4_cet6_core_5000.csv", combined[:5000])):
-        path, count = build(filename, words, definitions, examples, examples_ci)
+        path, count = build(filename, words, definitions, examples, examples_ci, cefr_exact, cefr_lower)
         print(f"{path}: {count} rows")
 
 
