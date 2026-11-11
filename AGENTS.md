@@ -13,8 +13,9 @@
 backend/                       Django 项目
   config/                      settings / urls / wsgi
   vocabulary/                  唯一的业务 app
-    models.py                  Dictionary / Word / UserDictionary / UserWordProgress / AnswerLog
+    models.py                  Dictionary / Word / UserDictionary / UserWordProgress / AnswerLog / EmailAddress / EmailVerification
     services.py                复习调度 schedule() 与导入解析、批量写库
+    email_codes.py             邮箱验证码：生成/加盐哈希/冷却与频率限制/发信/核销
     views.py                   HTTP 层（函数视图为主 + 一个 ModelViewSet）
     serializers.py             输出结构，含每个词的 preview 间隔文案
     urls.py                    路由（显式路由必须写在 router 之前）
@@ -26,6 +27,7 @@ frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
   src/lib/study.ts             纯函数：填空遮罩、队列、格式化（node 可直接测）
   src/lib/profile.ts           学习面板的纯函数（热力图分档、按周分列）
+  src/lib/chart.ts             图表纯函数（柱子/折线坐标、保持率与校准结论文案）
   src/lib/words.ts             词表浏览的纯函数（查询串、分页、幂等 token、时间格式）
   src/lib/router.ts            hash 路由：/ · /auth · /words/:id · /words/:id/:wordId · /profile · /study/:id · /done/:id
   src/composables/useSession.ts 全局学习会话状态与动作
@@ -74,7 +76,7 @@ cd backend && ../.venv/Scripts/python.exe manage.py test
 cd frontend
 npm run typecheck   # tsc --noEmit，只覆盖 .ts（没有 vue-tsc）
 npm run test        # node --test --test-isolation=none，纯逻辑，不需要浏览器
-npm run build       # vite build，构建产物在 dist/（已 gitignore）
+npm run build       # vite build，产物在 frontend/dist（已入库：部署机不装 Node，pull 即可用）
 ```
 
 ## 5. 业务规则（改之前务必确认）
@@ -99,6 +101,24 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - **写进度**：必须在事务中 `select_for_update()` 后调用 `services.schedule()`，不要在视图里重算间隔。
 - **每日计时**：所有「今天」都用 `timezone.localdate()`，时区固定 `Asia/Shanghai`。
 
+### 邮箱验证码 / 找回密码
+
+- **三种用途**：`login`（登录+注册二合一）、`reset`（重置密码）、`bind`（已登录时绑定邮箱）；**`reset`/`bind` 不能互用**，`verify_code` 按 purpose 取码。
+- **只存哈希**：`EmailVerification.code_hash = sha256(salt + code)`，盐每次随机；比对用 `secrets.compare_digest`，不要拿明文比。
+- **生命周期**：6 位数字，`EMAIL_CODE_TTL_MINUTES = 10` 分钟；发送同邮箱同用途要等 `EMAIL_CODE_COOLDOWN_SECONDS = 60` 秒；每邮箱每小时 5 封、每 IP 每小时 20 封（`EMAIL_CODE_EMAIL_HOURLY_LIMIT` / `EMAIL_CODE_IP_HOURLY_LIMIT`）。
+- **一次性**：核销即写 `consumed_at`；重发会把同邮箱同用途的旧码一起作废（最后一个收到的才有效）；输错 `EMAIL_CODE_MAX_ATTEMPTS = 5` 次直接作废。
+- **不发信不占冷却**：投递失败时删掉这行再返回 502，否则用户要白等一分钟。
+- **防枚举**：`send` 一律回同一句「如果这个邮箱可以使用…」；`reset` 遇到未绑定邮箱也回成功但不发信。只有已登录的 `bind` 会明说「已被占用」。
+- **账号归属**：邮箱身份在 `EmailAddress`（`email` 唯一），不在 `auth.User.email`（那列不唯一）。首次验证自动建号：`username` 由邮箱前缀生成（不足 3 位或含非法字符就 `u_<hex>`），密码 `set_unusable_password()`。
+- **绑定邮箱**：`bind` 成功后同步写 `auth.User.email`（仅在原值为空时），这样 `/api/auth/me` 能显示。
+
+### 面板指标（`/api/profile/insights`）
+
+- **保持率**：只看 `interval_before > 0` 的非练习、非 skip 作答——第一次见词不是回忆测试；练习挑的是弱词，会把曲线拉低，必须排除。分档边界在 `views.RETENTION_BUCKETS`。
+- **已掌握时间**：没有单独字段，用「第一次出现 `interval_after >= 21` 的作答时间」近似。
+- **评分校准**：同一个词相邻两次作答配对，要求第二次 `interval_before > 0` 且间隔 ≥ 1 小时（同一轮重新排队不算），第二次答 `again`/`hard` 视为「高估了」。
+- 前端只做展示与文案：分档、坐标、结论文案都在 `lib/chart.ts`，不要在组件里重算。
+
 ## 6. API 约定
 
 - 错误统一 `{"detail": "中文文案"}`，前端直接展示，不要在前端再拼英文。
@@ -112,6 +132,9 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 | POST | `/api/auth/login` | 登录 |
 | POST | `/api/auth/logout` | 退出 |
 | GET | `/api/auth/me` | 当前用户，未登录 401 |
+| POST | `/api/auth/email/send` | 发验证码 `{email, purpose}`，purpose = `login`\|`reset`\|`bind`；bind 需登录 |
+| POST | `/api/auth/email/verify` | 验证码登录/注册（`login`）或绑定邮箱（`bind`），未注册的邮箱验证后自动建账号 |
+| POST | `/api/auth/password/reset` | 用验证码重置密码并直接登录 |
 | GET | `/api/dictionaries/` | 可见词典 + 当前用户的 learned/due 计数 |
 | GET | `/api/dictionaries/{id}/` | 词典详情 |
 | GET | `/api/dictionaries/{id}/words?q=&filter=&sort=&page=&page_size=` | 词表分页/搜索（filter: all/new/learning/mastered/due/wrong） |
@@ -128,6 +151,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 | POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?, client_token?, known?}`；practice 只记录，known 直接标掌握（365 天） |
 | POST | `/api/answers/{log_id}/undo` | 撤销最近一次作答（10 分钟内） |
 | GET | `/api/profile/summary?days=371` | 个人学习面板：每日/连续天数/按词典（days 支持 7–371） |
+| GET | `/api/profile/insights?days=180` | 保持率曲线、累计进度、评分校准（days 支持 7–371） |
 | GET | `/api/statistics?dictionary_id=` | 进度、掌握数、待复习、下次复习时间 |
 
 ## 7. 前端约定
@@ -142,12 +166,14 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 填空模式的遮罩与判分必须共用 `lib/study.ts` 的 `clozeSlots / buildClozeAnswer / checkCloze`，不要在组件和模板里各算一套（历史 bug 就是这么来的）。
 - 长单词必须可换行：`h3` 用 `clamp()`，`overflow-wrap: anywhere`，填空行 `flex-wrap: wrap`。
 - 热力图的格子边长由 `ProfileView` 的 `measureHeatmap()` 按容器宽度算（`--heat-cell` / `--heat-gap`），显示周数也随宽度在 13–53 周之间自适应；不要写死像素或加横向滚动容器，格子必须保持正方形。
+- 登录页有四种形态（密码登录 / 注册 / 邮箱验证码 / 重置密码），状态在 `AuthView` 的 `mode` 里；发码按钮的 60 秒冷却由 `retry_after` 驱动，别写死。
+- 图表不引第三方库：坐标计算与结论文案都在 `lib/chart.ts`，模板只画 SVG；新增图表先加纯函数 + `tests/chart.test.mjs` 用例。
 - 文案全中文；错误优先用后端 `detail`。
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 62 个）。
-- 改填空/SRS/热力图/朗读/词表 → 改 `frontend/tests/*.test.mjs`（当前 35 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 81 个）。
+- 改填空/SRS/热力图/朗读/词表/图表 → 改 `frontend/tests/*.test.mjs`（当前 49 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
 
@@ -162,6 +188,11 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 例句语音用 edge-tts（`en-US-AriaNeural`）在服务器上生成，句子会发给 Microsoft 的语音服务；缓存在 `DJANGO_AUDIO_DIR`（生产 `/var/lib/english-vocabulary/audio`），删掉缓存目录会重新生成。
 - CEFR 只覆盖 Oxford 3000/5000 的 5062 个词；CET 词表里约 1/3 查不到等级，这些词在 core 顺序里排在 C1 之后、A2 之前。要更准的顺序需要引入词频数据。
 - SQLite 单文件；要上多实例/高并发前先换 PostgreSQL，并把 `db.sqlite3` 从仓库外备份策略里接进来。
+- 邮箱验证码默认走控制台邮件（开发期把码打到 runserver 终端）；生产必须配 SMTP，否则 `send` 返回 502。国内服务器别用 25 端口（基本被封，实测出站 25 全部超时），用 465(SSL)/587(TLS)，并配 SPF/DKIM 免进垃圾箱。
+- **SMTP 返回 250 ≠ 用户收到**：服务商会先收下再校验发件人/额度，被拒的记录只在服务商后台的事件日志里。排障顺序是「事件日志 → 发件人是否验证 → IP 是否在授权列表」，不要只看 `send_mail` 返回值。Brevo 的具体坑见 `docs/deploy.md` 4.2。
+- 忘记密码只覆盖「已绑定邮箱」的账号：老账号要先在个人面板/接口里绑定邮箱（`/api/auth/email/send` + `verify`，purpose=bind），否则 `reset` 只会静默成功但收不到信。
+- `/api/profile/insights` 的评分校准是「相邻两次作答配对」的简化模型：它衡量的是「自评后隔一段时间还想得起来」，不是严格的记忆强度估计；样本少于 8 次的档位前端只显示「样本还少」。
+- 保持率与校准都依赖 `AnswerLog`，所以练习（practice）和撤销（undone）必须继续排除，否则曲线会失真。
 
 ## 10. 踩坑清单
 
