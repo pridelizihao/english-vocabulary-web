@@ -11,7 +11,7 @@ import { browseMemory, formatMoment, statusLabel } from '../lib/words'
 const props = defineProps<{ dictionaryId: number; wordId: number }>()
 
 const { loadWord, loading } = useSession()
-const { speak, message } = useSpeech()
+const { speak, prefetch, message } = useSpeech()
 const detail = ref<WordDetail | null>(null)
 
 const exampleParts = computed(() => (detail.value ? splitExample(detail.value.example, detail.value.spelling) : []))
@@ -21,6 +21,9 @@ const progress = computed(() => detail.value?.progress ?? null)
 async function load() {
   if (!props.wordId) return
   detail.value = await loadWord(props.wordId)
+  if (detail.value) {
+    prefetch(detail.value.spelling, [detail.value.audio_url, detail.value.pronunciation_url])
+  }
 }
 
 function backToWords() {

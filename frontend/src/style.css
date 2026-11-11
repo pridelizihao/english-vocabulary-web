@@ -1608,3 +1608,7 @@ label {
   gap: 8px;
   justify-content: flex-end;
 }
+.cloze-hint .hint-toggle {
+  font-size: 13px;
+  color: var(--muted);
+}

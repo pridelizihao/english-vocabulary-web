@@ -3,16 +3,24 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { englishVoice, onlineSpeechUrl } from '../lib/speech'
 
 const NO_AUDIO_MESSAGE = '朗读失败：浏览器没有放出声音（可能被拦截，或没有可用的英文语音）'
+const LOCAL_VOICE_TIMEOUT = 900
+const AUDIO_TIMEOUT = 4000
+const AUDIO_CACHE_SIZE = 8
 
 /**
  * Speak one word. Order: provided audio (dictionary / pronunciation URL) →
  * system English voice → online fallback. Shared by the study card, the cloze
  * mode and the word detail page so the fallback chain stays in one place.
+ *
+ * Audio elements are preloaded ahead of time (`prefetch`) and reused, so the
+ * second play — and the online fallback after a slow voice — starts instantly.
  */
 export function useSpeech() {
   const message = ref('')
+  const busy = ref(false)
   const availableVoices = ref<SpeechSynthesisVoice[]>([])
   const available = typeof window !== 'undefined' && 'speechSynthesis' in window
+  const audioCache = new Map<string, HTMLAudioElement>()
   let player: HTMLAudioElement | null = null
 
   function refreshVoices() {
@@ -24,10 +32,38 @@ export function useSpeech() {
     }
   }
 
+  /** Buffer an audio URL without playing it (autoplay rules don't apply). */
+  function preload(url: string | null | undefined) {
+    if (!url || audioCache.has(url)) return
+    try {
+      const audio = new Audio()
+      audio.preload = 'auto'
+      audio.src = url
+      audio.load()
+      audioCache.set(url, audio)
+      if (audioCache.size > AUDIO_CACHE_SIZE) {
+        const oldest = audioCache.keys().next().value
+        if (oldest) audioCache.delete(oldest)
+      }
+    } catch {
+      // 浏览器可能禁用音频，忽略即可，真正播放时会再试
+    }
+  }
+
+  /** Warm the cache for the word about to be shown. */
+  function prefetch(spelling: string, providedUrls: (string | null | undefined)[] = []) {
+    for (const url of providedUrls) preload(url)
+    preload(onlineSpeechUrl(spelling))
+  }
+
   function stop() {
     if (player) {
-      player.pause()
-      player.src = ''
+      try {
+        player.pause()
+        player.currentTime = 0
+      } catch {
+        // 元素还没加载出元数据时忽略
+      }
       player = null
     }
     if (available) {
@@ -42,7 +78,15 @@ export function useSpeech() {
   function playUrl(url: string) {
     return new Promise<boolean>((resolve) => {
       try {
-        const audio = new Audio(url)
+        let audio = audioCache.get(url)
+        if (!audio) {
+          preload(url)
+          audio = audioCache.get(url)
+        }
+        if (!audio) {
+          resolve(false)
+          return
+        }
         player = audio
         let settled = false
         let timer = 0
@@ -52,8 +96,14 @@ export function useSpeech() {
           window.clearTimeout(timer)
           resolve(ok)
         }
-        timer = window.setTimeout(() => finish(false), 6000)
+        timer = window.setTimeout(() => finish(false), AUDIO_TIMEOUT)
         audio.onerror = () => finish(false)
+        try {
+          audio.pause()
+          audio.currentTime = 0
+        } catch {
+          // 未加载完成时设置 currentTime 会抛错，忽略
+        }
         audio.play().then(() => finish(true)).catch(() => finish(false))
       } catch {
         resolve(false)
@@ -93,7 +143,7 @@ export function useSpeech() {
         }
         resolve(ok)
       }
-      timer = window.setTimeout(() => finish(false), 2500)
+      timer = window.setTimeout(() => finish(false), LOCAL_VOICE_TIMEOUT)
       utterance.onstart = () => finish(true)
       utterance.onerror = () => finish(false)
       try {
@@ -107,13 +157,24 @@ export function useSpeech() {
   async function speak(spelling: string, providedUrls: (string | null | undefined)[] = []) {
     message.value = ''
     stop()
-    for (const url of providedUrls) {
-      if (url && (await playUrl(url))) return true
+    busy.value = true
+    try {
+      // Start buffering the online fallback immediately: if the local voice is
+      // slow to start, the fallback then has nothing to download.
+      const online = onlineSpeechUrl(spelling)
+      for (const url of providedUrls) preload(url)
+      preload(online)
+
+      for (const url of providedUrls) {
+        if (url && (await playUrl(url))) return true
+      }
+      if (await speakLocally(spelling)) return true
+      if (await playUrl(online)) return true
+      message.value = NO_AUDIO_MESSAGE
+      return false
+    } finally {
+      busy.value = false
     }
-    if (await speakLocally(spelling)) return true
-    if (await playUrl(onlineSpeechUrl(spelling))) return true
-    message.value = NO_AUDIO_MESSAGE
-    return false
   }
 
   onMounted(() => {
@@ -127,5 +188,5 @@ export function useSpeech() {
     stop()
   })
 
-  return { speak, stop, message, available }
+  return { speak, stop, prefetch, message, busy, available }
 }

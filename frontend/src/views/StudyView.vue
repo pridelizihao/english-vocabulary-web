@@ -42,8 +42,24 @@ const answer = ref<string[]>([])
 const result = ref<'correct' | 'wrong' | null>(null)
 const shaking = ref(false)
 const attempts = ref(0)
-const { speak: speakWord, stop: stopSpeech, message: speechMessage } = useSpeech()
-const hintVisible = ref(false)
+const {
+  speak: speakWord,
+  stop: stopSpeech,
+  prefetch: prefetchSpeech,
+  message: speechMessage,
+  busy: speechBusy,
+} = useSpeech()
+const hintVisible = ref(true)
+
+// 提前缓冲当前词的发音，按下「朗读」时就不用再等网络。
+watch(
+  () => props.item,
+  (item) => {
+    if (!item) return
+    prefetchSpeech(item.word.spelling, [item.word.audio_url, item.word.pronunciation_url])
+  },
+  { immediate: true },
+)
 const fullMeaningVisible = ref(false)
 const clozeBox = ref<HTMLElement | null>(null)
 
@@ -66,7 +82,7 @@ function reset() {
   shaking.value = false
   attempts.value = 0
   speechMessage.value = ''
-  hintVisible.value = false
+  hintVisible.value = true
   fullMeaningVisible.value = false
   answer.value = buildClozeAnswer(word.value.spelling)
   focusFirstEmpty()
@@ -207,6 +223,11 @@ function onWindowKeydown(event: KeyboardEvent) {
     }
     return
   }
+  if (event.key === 'm' || event.key === 'M') {
+    event.preventDefault()
+    emit('update:mode', props.mode === 'card' ? 'cloze' : 'card')
+    return
+  }
   if (props.canUndo && (event.key === 'u' || event.key === 'U' || (event.ctrlKey && event.key === 'z'))) {
     event.preventDefault()
     emit('undo')
@@ -256,7 +277,7 @@ onBeforeUnmount(() => {
         </p>
       </div>
       <div class="study-tools">
-        <div class="mode-switch" role="group" aria-label="练习模式">
+        <div class="mode-switch" role="group" aria-label="练习模式" title="按 M 在卡片和填空之间切换">
           <button
             :class="{ active: mode === 'card' }"
             :aria-pressed="mode === 'card'"
@@ -286,7 +307,9 @@ onBeforeUnmount(() => {
     <section v-if="mode === 'card'" class="card">
       <div class="word-row">
         <h3 :class="{ long: word.spelling.length > 10 }">{{ word.spelling }}</h3>
-        <button class="speak-button" title="朗读单词" aria-label="朗读单词" @click="speak">🔊 朗读</button>
+        <button class="speak-button" title="朗读单词" aria-label="朗读单词" :aria-busy="speechBusy" @click="speak">
+          {{ speechBusy ? '🔊 播放中…' : '🔊 朗读' }}
+        </button>
       </div>
       <p class="phonetic">
         {{ word.phonetic || '暂无音标' }}
@@ -345,17 +368,19 @@ onBeforeUnmount(() => {
         </template>
       </div>
       <p v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</p>
-      <button class="speak-button" title="朗读单词" aria-label="朗读单词" @click="speak">🔊 朗读</button>
+      <button class="speak-button" title="朗读单词" aria-label="朗读单词" :aria-busy="speechBusy" @click="speak">
+        {{ speechBusy ? '🔊 播放中…' : '🔊 朗读' }}
+      </button>
       <p v-if="speechMessage" class="speech-hint">{{ speechMessage }}</p>
 
       <div v-if="word.example" class="cloze-hint">
-        <button class="link-button" @click="hintVisible = !hintVisible">
-          {{ hintVisible ? '收起例句提示' : '例句提示' }}
-        </button>
         <template v-if="hintVisible">
           <p class="example">{{ maskedExample }}</p>
           <p v-if="word.example_translation" class="example-translation">{{ word.example_translation }}</p>
         </template>
+        <button class="link-button hint-toggle" @click="hintVisible = !hintVisible">
+          {{ hintVisible ? '隐藏例句' : '显示例句' }}
+        </button>
       </div>
 
       <p v-if="noBlanks" class="muted">这个词太短，没有需要填的空，直接继续即可。</p>
@@ -394,10 +419,10 @@ onBeforeUnmount(() => {
     </section>
 
     <p v-if="mode === 'card'" class="keyboard-hint muted">
-      快捷键：<kbd>空格</kbd> 看答案 · <kbd>1</kbd>–<kbd>4</kbd> 评分 · <kbd>U</kbd> 撤销 · <kbd>回车</kbd> 确认
+      快捷键：<kbd>空格</kbd> 看答案 · <kbd>1</kbd>–<kbd>4</kbd> 评分 · <kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销
     </p>
     <p v-else class="keyboard-hint muted">
-      快捷键：<kbd>回车</kbd> 检查 · <kbd>Esc</kbd> 看答案 · <kbd>Backspace</kbd> 回退 · <kbd>U</kbd> 撤销
+      快捷键：<kbd>回车</kbd> 检查 · <kbd>Esc</kbd> 看答案 · <kbd>Backspace</kbd> 回退 · <kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销
     </p>
   </section>
 </template>

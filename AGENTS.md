@@ -132,9 +132,10 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 组件里不直接 `fetch`，一律走 `src/api.ts`；请求超时、401 跳登录、中文兜底都在那一层。
 - 纯逻辑放 `src/lib/`，并在 `frontend/tests/` 里用 node 直接测（不引 Vue、不引 DOM）。
 - 视图只管展示；共享状态和异步动作放 `useSession()`。新增视图先加路由解析 `lib/router.ts`。
-- 快捷键是产品的一部分：`空格` 看答案、`1`–`4` 评分、`回车` 确认、`U` 撤销（仅在有可撤销作答时）。改交互时别弄丢。
+- 快捷键是产品的一部分：`空格` 看答案、`1`–`4` 评分、`回车` 确认、`M` 切换卡片/填空、`U` 撤销（仅在有可撤销作答时）。改交互时别弄丢。
 - 词表页的筛选状态放在 URL（`?q=&filter=&sort=&page=`）：`lib/words.ts` 的 `buildWordsQuery / clampPage` 是唯一实现，`browseMemory` 记住每本词典的查询串，详情页据此返回。
-- 朗读统一走 `useSpeech()`，不要在视图里重写播放/降级链（音频 → 本地英文语音 → 有道）。
+- 朗读统一走 `useSpeech()`，不要在视图里重写播放/降级链（词典音频 → 本地英文语音 → 有道）。换词时调用 `prefetch()` 预热音频；不是每次 `new Audio()`，播放器按 URL 缓存复用（最多 8 个）。
+- 填空模式的例句默认可见（目标词已遮罩），`hintVisible` 默认 `true`，不要再改回「点一下才显示」。
 - 填空模式的遮罩与判分必须共用 `lib/study.ts` 的 `clozeSlots / buildClozeAnswer / checkCloze`，不要在组件和模板里各算一套（历史 bug 就是这么来的）。
 - 长单词必须可换行：`h3` 用 `clamp()`，`overflow-wrap: anywhere`，填空行 `flex-wrap: wrap`。
 - 热力图的格子边长由 `ProfileView` 的 `measureHeatmap()` 按容器宽度算（`--heat-cell` / `--heat-gap`），显示周数也随宽度在 13–53 周之间自适应；不要写死像素或加横向滚动容器，格子必须保持正方形。
@@ -153,7 +154,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 释义仍是 ECDICT 原始多义项文本，卡片/填空只显示 `primaryMeaning()` 截出的主释义，完整内容可展开。
 - 没有「导出/分享」；撤销只覆盖 10 分钟内的最近一次作答，不做任意历史回滚。
 - Docker 配置（gunicorn + collectstatic + nginx 托管 `/static/`）已写好，但开发机没有 Docker，**未实测**；生产走的是原生部署（nginx + gunicorn + systemd），步骤见 `docs/deploy.md`，已在 Ubuntu 24.04 上跑通。
-- 单词发音顺序是「词典自带 `audio_url` → 系统英文语音（Web Speech API）→ 有道在线发音」，卡片和填空都有「🔊 朗读」按钮；在线发音会把单词发到 `dict.youdao.com`，没有英文语音包时靠它兜底。
+- 单词发音顺序是「词典自带 `audio_url` → 系统英文语音（Web Speech API）→ 有道在线发音」；本地语音最多等 900ms，失败就切在线。换词时 `prefetch()` 预载音频，播放器按 URL 缓存，第二次播放基本瞬时。卡片、填空和词详情都有「🔊 朗读」按钮；在线发音会把单词发到 `dict.youdao.com`，没有英文语音包时靠它兜底。
 - 词表来源见 `data/sources/README.md`，商用前需确认上游授权。
 - SQLite 单文件；要上多实例/高并发前先换 PostgreSQL，并把 `db.sqlite3` 从仓库外备份策略里接进来。
 
