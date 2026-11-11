@@ -132,7 +132,7 @@ npm run build       # vite build，构建产物在 dist/（已 gitignore）
 - 组件里不直接 `fetch`，一律走 `src/api.ts`；请求超时、401 跳登录、中文兜底都在那一层。
 - 纯逻辑放 `src/lib/`，并在 `frontend/tests/` 里用 node 直接测（不引 Vue、不引 DOM）。
 - 视图只管展示；共享状态和异步动作放 `useSession()`。新增视图先加路由解析 `lib/router.ts`。
-- 快捷键是产品的一部分：`空格` 看答案、`1`–`4` 评分、`回车` 确认、`M` 切换卡片/填空、`U` 撤销（仅在有可撤销作答时）。改交互时别弄丢。
+- 快捷键是产品的一部分：`空格` 看答案、`1`–`4` 评分、`回车` 确认、`M` 切换卡片/填空（填空输入框内必须用 `Alt+M`，否则 m 会被当成字母输入）、`U` 撤销（仅在有可撤销作答时）。改交互时别弄丢。
 - 词表页的筛选状态放在 URL（`?q=&filter=&sort=&page=`）：`lib/words.ts` 的 `buildWordsQuery / clampPage` 是唯一实现，`browseMemory` 记住每本词典的查询串，详情页据此返回。
 - 朗读统一走 `useSpeech()`，不要在视图里重写播放/降级链（词典音频 → 本地英文语音 → 有道）。换词时调用 `prefetch()` 预热音频；不是每次 `new Audio()`，播放器按 URL 缓存复用（最多 8 个）。
 - 填空模式的例句默认可见（目标词已遮罩），`hintVisible` 默认 `true`，不要再改回「点一下才显示」。

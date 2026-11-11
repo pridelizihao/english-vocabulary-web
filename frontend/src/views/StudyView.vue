@@ -179,6 +179,10 @@ function restartAttempt() {
   focusFirstEmpty()
 }
 
+function toggleMode() {
+  emit('update:mode', props.mode === 'card' ? 'cloze' : 'card')
+}
+
 function primaryAction() {
   if (props.mode === 'card') {
     if (!revealed.value) revealed.value = true
@@ -212,6 +216,12 @@ function onWindowKeydown(event: KeyboardEvent) {
     revealAnswer()
     return
   }
+  // Alt+M works even while typing into a blank; a plain "m" must stay a letter.
+  if (event.altKey && (event.code === 'KeyM' || event.key.toLowerCase() === 'm')) {
+    event.preventDefault()
+    toggleMode()
+    return
+  }
   const target = event.target as HTMLElement | null
   const typing = Boolean(
     target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable),
@@ -225,7 +235,7 @@ function onWindowKeydown(event: KeyboardEvent) {
   }
   if (event.key === 'm' || event.key === 'M') {
     event.preventDefault()
-    emit('update:mode', props.mode === 'card' ? 'cloze' : 'card')
+    toggleMode()
     return
   }
   if (props.canUndo && (event.key === 'u' || event.key === 'U' || (event.ctrlKey && event.key === 'z'))) {
@@ -277,7 +287,7 @@ onBeforeUnmount(() => {
         </p>
       </div>
       <div class="study-tools">
-        <div class="mode-switch" role="group" aria-label="练习模式" title="按 M 在卡片和填空之间切换">
+        <div class="mode-switch" role="group" aria-label="练习模式" title="卡片 / 填空切换（M；填空输入时 Alt+M）">
           <button
             :class="{ active: mode === 'card' }"
             :aria-pressed="mode === 'card'"
@@ -422,7 +432,7 @@ onBeforeUnmount(() => {
       快捷键：<kbd>空格</kbd> 看答案 · <kbd>1</kbd>–<kbd>4</kbd> 评分 · <kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销
     </p>
     <p v-else class="keyboard-hint muted">
-      快捷键：<kbd>回车</kbd> 检查 · <kbd>Esc</kbd> 看答案 · <kbd>Backspace</kbd> 回退 · <kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销
+      快捷键：<kbd>回车</kbd> 检查 · <kbd>Esc</kbd> 看答案 · <kbd>Alt</kbd>+<kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销
     </p>
   </section>
 </template>
