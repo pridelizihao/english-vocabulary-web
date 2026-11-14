@@ -108,6 +108,15 @@ watch(() => props.wordId, load)
           <div><strong>{{ progress.streak }}</strong><span>连续答对</span></div>
         </div>
         <p v-else class="muted">还没有学过这个词，去背词时它会出现。</p>
+        <p v-if="progress" class="mastered-progress">
+          <template v-if="progress.status === 'retired'">已归档，不再参与每日复习。</template>
+          <template v-else-if="detail.steps_to_mastered === 0">已达到「已掌握」（间隔 ≥ 21 天）。</template>
+          <template v-else>
+            距「已掌握」还差
+            <strong>{{ detail.steps_to_mastered }} 次</strong>
+            连续答对（间隔跨过 21 天就算掌握，之后还会继续复习）。
+          </template>
+        </p>
         <p v-if="progress?.status === 'retired'" class="retired-note">
           这个词间隔已经很长（或连续答对足够多次），已移出每日复习队列，不会再来打扰你。
           <button class="link-button" :disabled="relearning" @click="relearn">

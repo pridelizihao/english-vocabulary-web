@@ -55,6 +55,7 @@ from .services import (
     schedule,
     sentence_audio_file,
     status_for,
+    steps_to_mastered,
 )
 
 User = get_user_model()
@@ -634,6 +635,8 @@ def word_detail(request, word_id):
     payload = WordSerializer(word, context={'preview_map': {word.id: preview_intervals(progress)}}).data
     payload['dictionary'] = {'id': dictionary.id, 'name': dictionary.name}
     payload['progress'] = ProgressSerializer(progress).data if progress else None
+    # 距掌握还差几次：直接拿调度器往前推，和真实规则保持一致。
+    payload['steps_to_mastered'] = steps_to_mastered(progress) if progress else None
     payload['history'] = history
     return Response(payload)
 
@@ -1127,6 +1130,23 @@ def profile_summary(request):
     dictionaries.sort(key=lambda item: item['name'])
 
     extra_used_today = logs.filter(is_extra=True, created_at__date=today).count()
+    # 离掌握最近的那个词：间隔最长的未掌握词，告诉用户还差几次。
+    candidate = (
+        progress.exclude(status__in=MASTERED_STATUSES)
+        .select_related('word')
+        .order_by('-interval_days', '-streak', 'id')
+        .first()
+    )
+    closest = None
+    if candidate is not None:
+        closest = {
+            'word_id': candidate.word_id,
+            'spelling': candidate.word.spelling,
+            'dictionary_id': candidate.word.dictionary_id,
+            'interval_days': candidate.interval_days,
+            'streak': candidate.streak,
+            'steps': steps_to_mastered(candidate),
+        }
     return Response({
         'days': days,
         'today': daily[-1],
@@ -1141,6 +1161,7 @@ def profile_summary(request):
         'daily': daily,
         'dictionaries': dictionaries,
         'extra': {'used_today': extra_used_today, 'limit': EXTRA_NEW_LIMIT},
+        'closest_to_mastered': closest,
     })
 
 

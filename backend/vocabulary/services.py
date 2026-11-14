@@ -40,6 +40,8 @@ MASTERED_STATUSES = ('mastered', 'retired')
 NEW_WORD_HALVE_DUE = 40
 NEW_WORD_PAUSE_DUE = 80
 NEW_WORD_HALVED = 10
+# 「距掌握还差几次」最多往前推这么多步，防脏数据时死循环。
+MASTERED_STEPS_LIMIT = 20
 # An answer can be undone only within this window (see views.undo_answer).
 UNDO_WINDOW_MINUTES = 10
 RATINGS = ('again', 'hard', 'good', 'easy')
@@ -188,6 +190,24 @@ def status_for(progress):
     if progress.interval_days >= MASTERED_INTERVAL_DAYS:
         return 'mastered'
     return 'learning'
+
+
+def steps_to_mastered(progress, rating='good'):
+    """还要连续答对几次，间隔才会跨过 21 天（= 已掌握）。
+
+    直接拿真实调度器往前推：不要在这里手写「1/3/7/19」的表格，否则改了
+    `schedule()` 的规则两边就会对不上。已经掌握 / 归档的返回 0。
+    """
+    if progress.status in MASTERED_STATUSES:
+        return 0
+    if progress.interval_days >= MASTERED_INTERVAL_DAYS:
+        return 0
+    draft = _clone_progress(progress)
+    for step in range(1, MASTERED_STEPS_LIMIT + 1):
+        schedule(draft, rating)
+        if draft.interval_days >= MASTERED_INTERVAL_DAYS:
+            return step
+    return MASTERED_STEPS_LIMIT
 
 
 def derive_cloze_rating(attempts, revealed, correct):

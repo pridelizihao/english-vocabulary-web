@@ -31,6 +31,7 @@ from .services import (
     derive_cloze_rating,
     schedule,
     status_for,
+    steps_to_mastered,
 )
 
 PASSWORD = 'Str0ngPass!23'
@@ -1077,6 +1078,60 @@ class ClozeEvidenceTests(ApiTestCase):
         response = self.cloze()
         self.assertEqual(response.status_code, 400)
         self.assertIn('correct', response.data['detail'])
+
+
+class MasteredProgressTests(ApiTestCase):
+    """「距掌握还差几次」必须和真实调度器一致。"""
+
+    def progress(self, **fields):
+        """不落库的临时进度：steps_to_mastered 只读属性，不需要写数据库。"""
+        return UserWordProgress(user=self.user, word=self.words[0], **fields)
+
+    def test_steps_shrink_as_interval_grows(self):
+        self.assertEqual(steps_to_mastered(self.progress()), 5)
+        self.assertEqual(steps_to_mastered(self.progress(streak=1, interval_days=1)), 4)
+        self.assertEqual(steps_to_mastered(self.progress(streak=3, interval_days=7)), 2)
+        self.assertEqual(steps_to_mastered(self.progress(streak=4, interval_days=19)), 1)
+        # 已经跨过 21 天就是 0
+        self.assertEqual(steps_to_mastered(self.progress(streak=5, interval_days=52, status='mastered')), 0)
+
+    def test_word_detail_exposes_steps_to_mastered(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        detail = self.client.get(f'/api/words/{self.words[0].id}').data
+        self.assertEqual(detail['steps_to_mastered'], 4)
+
+    def test_word_detail_without_progress_returns_null(self):
+        self.login()
+        self.enroll()
+        detail = self.client.get(f'/api/words/{self.words[0].id}').data
+        self.assertIsNone(detail['progress'])
+        self.assertIsNone(detail['steps_to_mastered'])
+
+    def test_profile_reports_the_closest_word(self):
+        self.login()
+        self.enroll()
+        UserWordProgress.objects.create(user=self.user, word=self.words[0], streak=4, interval_days=19)
+        other = Word.objects.create(dictionary=self.dictionary, spelling='zebra', meaning='斑马')
+        UserWordProgress.objects.create(user=self.user, word=other, streak=1, interval_days=1)
+        summary = self.client.get('/api/profile/summary').data
+        closest = summary['closest_to_mastered']
+        self.assertEqual(closest['spelling'], 'abandon')
+        self.assertEqual(closest['steps'], 1)
+        self.assertEqual(closest['interval_days'], 19)
+
+    def test_profile_closest_ignores_mastered_and_empty(self):
+        self.login()
+        self.enroll()
+        summary = self.client.get('/api/profile/summary').data
+        self.assertIsNone(summary['closest_to_mastered'])
+
+        UserWordProgress.objects.create(
+            user=self.user, word=self.words[0], streak=5, interval_days=52, status='mastered',
+        )
+        summary = self.client.get('/api/profile/summary').data
+        self.assertIsNone(summary['closest_to_mastered'])
 
 
 class KnownWordTests(ApiTestCase):

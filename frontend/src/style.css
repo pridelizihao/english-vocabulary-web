@@ -1569,6 +1569,31 @@ label {
   text-align: left;
 }
 
+/* 「距掌握还差几次」的说明行 */
+.mastered-progress {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.closest-mastered {
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.closest-mastered strong {
+  color: var(--ink);
+}
+
 .detail-panel {
   margin-top: 18px;
 }

@@ -112,6 +112,16 @@ export type ProfileDictionary = {
   wrong: number
 }
 
+export type ClosestToMastered = {
+  word_id: number
+  spelling: string
+  dictionary_id: number
+  interval_days: number
+  streak: number
+  /** 还要连续答对几次，间隔才跨过 21 天。 */
+  steps: number
+}
+
 export type ProfileSummary = {
   days: number
   today: ProfileDay
@@ -120,6 +130,8 @@ export type ProfileSummary = {
   daily: ProfileDay[]
   dictionaries: ProfileDictionary[]
   extra: { used_today: number; limit: number }
+  /** 离掌握最近的词，还没有学过任何词时是 null。 */
+  closest_to_mastered: ClosestToMastered | null
 }
 
 export type RetentionBucket = {
@@ -216,6 +228,8 @@ export type AnswerHistoryEntry = {
 export type WordDetail = Word & {
   dictionary: { id: number; name: string }
   progress: Progress | null
+  /** 还要连续答对几次才到「已掌握」；已掌握/归档是 0，没学过是 null。 */
+  steps_to_mastered: number | null
   history: AnswerHistoryEntry[]
 }
 

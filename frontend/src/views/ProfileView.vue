@@ -266,6 +266,15 @@ function review(item: ProfileDictionary) {
         </div>
       </div>
 
+      <p v-if="profile.closest_to_mastered" class="closest-mastered">
+        <template v-if="profile.closest_to_mastered.steps === 0">
+          离「已掌握」最近的是 <strong>{{ profile.closest_to_mastered.spelling }}</strong>，已经达标。
+        </template>
+        <template v-else>
+          离「已掌握」最近的是 <strong>{{ profile.closest_to_mastered.spelling }}</strong>（间隔 {{ profile.closest_to_mastered.interval_days }} 天），再连续答对 <strong>{{ profile.closest_to_mastered.steps }} 次</strong>就到 21 天。
+        </template>
+      </p>
+
       <section class="panel profile-panel">
         <header class="profile-panel-head">
           <strong>账号邮箱</strong>

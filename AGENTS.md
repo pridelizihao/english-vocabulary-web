@@ -21,7 +21,7 @@ backend/                       Django 项目
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
     management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples / annotate_cefr
-    tests.py                   后端用例（当前 100 个）
+    tests.py                   后端用例（当前 105 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
@@ -82,7 +82,8 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 ## 5. 业务规则（改之前务必确认）
 
 - **间隔**：`good` 第 1/2/3 次分别 1/3/7 天，之后 `interval × ease`；`easy` 前两次 4/9 天，之后 `interval × ease × 1.3`；`hard` 至少 1 天，`×1.2`；`again` 归零、10 分钟后、`streak` 清零。
-- **掌握**：`interval_days >= 21` 才算 `mastered`（不是答对一次就算）。
+- **掌握**：`interval_days >= 21` 才算 `mastered`（不是答对一次就算，也不看连对次数）。间隔按 1 → 3 → 7 → 19 → 52 天增长，所以大约要连续答对 4–5 次、跨度 4 周才会跨过 21 天；答错（again）会掉回 `learning`。
+- **距掌握还差几次**：用 `services.steps_to_mastered()` 拿**真实调度器**往前推，不要在视图或前端手写「1/3/7/19」的表格——改了 `schedule()` 两边就会对不上。
 - **ease**：初始 2.5，区间 `[1.3, 3.2]`。
 - **每日新词预算**：`NEW_WORD_LIMIT = 20`，按 `first_learned_at` 当天计数；预算用完后 `/api/study/today` 返回空数组，前端据此显示「今日额度用完」。
 - **自适应新词**：额度不是无条件的 20 个，跟着到期复习量收口（`services.adaptive_new_limit`）：到期 < 40 给满 20；≥ 40 给 10（`NEW_WORD_HALVED`）；≥ 80（`NEW_WORD_PAUSE_DUE`）当天不给新词。接口返回的 `new_limit` 是**当天实际额度**，`new_limit_base` 是 20，`new_limit_note` 是给用户看的中文说明（没削减就是空串）。复习积压到停发新词时，`extra`（再来 20 个）也不能绕过——每天 20 新词配 50 复习上限，数学上追不上，所以必须有这个收口。
@@ -147,7 +148,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 | GET | `/api/dictionaries/` | 可见词典 + 当前用户的 learned/due 计数 |
 | GET | `/api/dictionaries/{id}/` | 词典详情 |
 | GET | `/api/dictionaries/{id}/words?q=&filter=&sort=&page=&page_size=` | 词表分页/搜索（filter: all/new/learning/mastered/due/wrong） |
-| GET | `/api/words/{word_id}` | 单词详情：preview + progress + 最近 10 条答题记录 |
+| GET | `/api/words/{word_id}` | 单词详情：preview + progress + `steps_to_mastered`（距掌握还差几次）+ 最近 10 条答题记录 |
 | GET | `/api/words/{word_id}/example-audio` | 例句语音（edge-tts 生成后缓存到 `AUDIO_CACHE_DIR`） |
 | DELETE | `/api/dictionaries/{id}/` | 删除自己的词典（staff 可删官方） |
 | POST | `/api/dictionaries/{id}/enroll` | 开始学习（幂等） |
@@ -160,7 +161,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 | POST | `/api/study/{word_id}/answer` | 卡片：`{mode:'card', rating}`；填空：`{mode:'cloze', correct, attempts, revealed}`（评分由服务器推导，传 rating 无效）；`practice` 只记录，`known` 直接归档 |
 | POST | `/api/words/{word_id}/relearn` | 把已归档的词放回复习队列（间隔清零、马上到期）；非归档词 400 |
 | POST | `/api/answers/{log_id}/undo` | 撤销最近一次作答（10 分钟内） |
-| GET | `/api/profile/summary?days=371` | 个人学习面板：每日/连续天数/按词典（days 支持 7–371） |
+| GET | `/api/profile/summary?days=371` | 个人学习面板：每日/连续天数/按词典/`closest_to_mastered`（离掌握最近的词，days 支持 7–371） |
 | GET | `/api/profile/insights?days=180` | 保持率曲线、累计进度、评分校准（days 支持 7–371） |
 | GET | `/api/statistics?dictionary_id=` | 进度、掌握数、待复习、下次复习时间 |
 
@@ -198,7 +199,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 100 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 105 个）。
 - 改填空/SRS/热力图/朗读/词表/图表/浮层定位 → 改 `frontend/tests/*.test.mjs`（当前 51 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
