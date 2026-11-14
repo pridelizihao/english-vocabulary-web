@@ -37,18 +37,23 @@ from .services import (
     EARLY_REVIEW_LIMIT,
     EXTRA_NEW_LIMIT,
     MASTERED_INTERVAL_DAYS,
+    MASTERED_STATUSES,
     NEW_WORD_LIMIT,
+    NEW_WORD_HALVE_DUE,
+    NEW_WORD_PAUSE_DUE,
     RATINGS,
     REVIEW_LIMIT,
     UNDO_WINDOW_MINUTES,
     ImportFileError,
     SentenceAudioError,
-    sentence_audio_file,
+    adaptive_new_limit,
     describe_interval,
     import_words,
     parse_import_rows,
     preview_intervals,
     schedule,
+    sentence_audio_file,
+    status_for,
 )
 
 User = get_user_model()
@@ -58,6 +63,20 @@ WORDS_PAGE_SIZE = 50
 WORDS_MAX_PAGE_SIZE = 200
 WRONG_WORDS_LIMIT = 50
 WORD_LIST_FILTERS = ('all', 'new', 'learning', 'mastered', 'due', 'wrong')
+
+
+def _due_q(now=None, prefix=''):
+    """到期复习的过滤条件：已归档的词不再进复习队列。
+
+    `prefix` 用于联表场景（例如从 Dictionary 反查时是
+    `words__userwordprogress__`）。
+    """
+    moment = now or timezone.now()
+    return Q(**{f'{prefix}next_review_at__lte': moment}) & ~Q(**{f'{prefix}status': 'retired'})
+
+
+# 「已掌握」的统计口径把已归档也算进去：归档必然已经掌握过。
+MASTERED_Q = Q(status__in=MASTERED_STATUSES)
 WORD_LIST_SORTS = ('alpha', 'recent', 'due', 'wrong')
 # Core order: B1/B2 first (the CET core), then C1, then words outside the
 # Oxford lists, then easy A2/A1 words; proper nouns always last.
@@ -371,7 +390,8 @@ class DictionaryViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins
                 ),
                 due_total=Count(
                     'words',
-                    filter=Q(words__userwordprogress__user=user, words__userwordprogress__next_review_at__lte=now),
+                    filter=Q(words__userwordprogress__user=user)
+                    & _due_q(now, 'words__userwordprogress__'),
                     distinct=True,
                 ),
             )
@@ -433,9 +453,9 @@ def _word_filter_queryset(request, dictionary, name):
     if name == 'learning':
         return words.filter(id__in=progress.filter(status='learning').values('word_id'))
     if name == 'mastered':
-        return words.filter(id__in=progress.filter(status='mastered').values('word_id'))
+        return words.filter(id__in=progress.filter(MASTERED_Q).values('word_id'))
     if name == 'due':
-        return words.filter(id__in=progress.filter(next_review_at__lte=timezone.now()).values('word_id'))
+        return words.filter(id__in=progress.filter(_due_q()).values('word_id'))
     if name == 'wrong':
         return words.filter(id__in=progress.filter(wrong_count__gt=0).values('word_id'))
     return words
@@ -612,6 +632,38 @@ def word_detail(request, word_id):
     return Response(payload)
 
 
+@api_view(['POST'])
+def relearn_word(request, word_id):
+    """把已归档的词放回复习队列（手动「重新学习」）。"""
+    error = require_authentication(request)
+    if error:
+        return error
+    word = Word.objects.filter(id=word_id).first()
+    if word is None:
+        return fail('单词不存在或没有访问权限', status.HTTP_404_NOT_FOUND)
+    _, error = dictionary_for_user(request, word.dictionary_id)
+    if error:
+        return fail('单词不存在或没有访问权限', status.HTTP_404_NOT_FOUND)
+    with transaction.atomic():
+        progress = (
+            UserWordProgress.objects.select_for_update()
+            .filter(user=request.user, word=word)
+            .first()
+        )
+        if progress is None:
+            return fail('这个词还没有学习记录', status.HTTP_400_BAD_REQUEST)
+        if progress.status != 'retired':
+            return fail('只有已归档的词才需要重新学习', status.HTTP_400_BAD_REQUEST)
+        progress.status = 'learning'
+        progress.streak = 0
+        progress.interval_days = 0
+        progress.next_review_at = timezone.now()
+        progress.save(update_fields=['status', 'streak', 'interval_days', 'next_review_at'])
+    payload = ProgressSerializer(progress).data
+    payload['preview'] = preview_intervals(progress)
+    return Response(payload)
+
+
 @api_view(['GET'])
 def today_study(request):
     error = require_authentication(request)
@@ -626,8 +678,12 @@ def today_study(request):
 
     progress = UserWordProgress.objects.filter(user=request.user, word__dictionary=dictionary)
     today = timezone.localdate()
+    now = timezone.now()
     new_learned_today = progress.filter(first_learned_at__date=today).count()
-    base_left = max(NEW_WORD_LIMIT - new_learned_today, 0)
+    due_reviews = progress.filter(_due_q(now)).count()
+    # 复习积压越多，今天的新词越少；额度不再是无条件的 20 个。
+    daily_limit = adaptive_new_limit(due_reviews)
+    base_left = max(daily_limit - new_learned_today, 0)
 
     # "再来 20 个" only kicks in after the default daily budget is used up.
     extra_requested = _clamp_int(request.query_params.get('extra'), 0, EXTRA_NEW_LIMIT)
@@ -635,7 +691,8 @@ def today_study(request):
         user=request.user, is_new=True, is_extra=True, created_at__date=today, undone_at__isnull=True,
     ).count()
     extra_left = max(EXTRA_NEW_LIMIT - extra_used_today, 0)
-    extra_budget = min(extra_requested, extra_left) if base_left == 0 else 0
+    # 复习积压到停发新词时，「再来 20 个」也不能绕过：先把复习清完。
+    extra_budget = min(extra_requested, extra_left) if base_left == 0 and daily_limit > 0 else 0
     budget = base_left + extra_budget
 
     remaining = Word.objects.filter(dictionary=dictionary).exclude(id__in=progress.values('word_id'))
@@ -660,12 +717,13 @@ def today_study(request):
         remaining = remaining.order_by('spelling', 'id')
     words = list(remaining[:budget]) if budget else []
     preview_map = {word.id: _preview_for(None) for word in words}
-    due_reviews = progress.filter(next_review_at__lte=timezone.now()).count()
     return Response({
         'dictionary_id': dictionary.id,
         'words': WordSerializer(words, many=True, context={'preview_map': preview_map}).data,
         'total': len(words),
-        'new_limit': NEW_WORD_LIMIT,
+        'new_limit': daily_limit,
+        'new_limit_base': NEW_WORD_LIMIT,
+        'new_limit_note': _adaptive_note(daily_limit, due_reviews),
         'new_learned_today': new_learned_today,
         'extra_used_today': extra_used_today,
         'extra_limit': EXTRA_NEW_LIMIT,
@@ -673,6 +731,15 @@ def today_study(request):
         'remaining_new': remaining.count(),
         'due_reviews': due_reviews,
     })
+
+
+def _adaptive_note(limit, due_reviews):
+    """告诉前端今天为什么不是 20 个新词。"""
+    if limit >= NEW_WORD_LIMIT:
+        return ''
+    if limit == 0:
+        return f'今天到期复习有 {due_reviews} 个，先清复习，新词暂停一天'
+    return f'今天到期复习有 {due_reviews} 个，新词减到 {limit} 个'
 
 
 @api_view(['GET'])
@@ -687,8 +754,8 @@ def today_review(request):
     if error:
         return error
     queryset = UserWordProgress.objects.filter(
-        user=request.user, word__dictionary=dictionary, next_review_at__lte=timezone.now(),
-    ).select_related('word')
+        user=request.user, word__dictionary=dictionary,
+    ).filter(_due_q()).select_related('word')
     total = queryset.count()
     queryset = queryset.order_by('?') if request.query_params.get('order') == 'random' else queryset.order_by('next_review_at', 'id')
     progress_list = list(queryset[:REVIEW_LIMIT])
@@ -758,7 +825,6 @@ def answer_word(request, word_id):
             interval_before = progress.interval_days
             if known:
                 now = timezone.now()
-                progress.status = 'mastered'
                 progress.interval_days = 365
                 progress.review_count += 1
                 progress.streak = max(progress.streak, 1)
@@ -766,6 +832,8 @@ def answer_word(request, word_id):
                 progress.next_review_at = now + timedelta(days=365)
                 if progress.first_learned_at is None:
                     progress.first_learned_at = now
+                # 标「已会」等于直接归档：不再进每日复习队列。
+                progress.status = status_for(progress)
             else:
                 schedule(progress, rating)
             progress.save(update_fields=[
@@ -785,7 +853,7 @@ def answer_word(request, word_id):
         return Response(_duplicate_answer_payload(existing))
 
     payload = ProgressSerializer(progress).data
-    payload['next_review_label'] = '一年后' if known else describe_interval(progress.interval_days, rating)
+    payload['next_review_label'] = '已移出复习' if known else describe_interval(progress.interval_days, rating)
     payload['preview'] = preview_intervals(progress)
     payload['is_new'] = created
     payload['is_extra'] = is_extra
@@ -875,7 +943,7 @@ def statistics(request):
     now = timezone.now()
     today = timezone.localdate()
     next_review = (
-        progress.filter(next_review_at__gt=now).order_by('next_review_at')
+        progress.exclude(status='retired').filter(next_review_at__gt=now).order_by('next_review_at')
         .values_list('next_review_at', flat=True).first()
     )
     new_learned_today = progress.filter(first_learned_at__date=today).count()
@@ -887,8 +955,9 @@ def statistics(request):
     return Response({
         'total_words': total,
         'learned_words': learned,
-        'mastered_words': progress.filter(status='mastered').count(),
-        'due_reviews': progress.filter(next_review_at__lte=now).count(),
+        'mastered_words': progress.filter(MASTERED_Q).count(),
+        'retired_words': progress.filter(status='retired').count(),
+        'due_reviews': progress.filter(_due_q(now)).count(),
         'today_completed': today_completed,
         'today_new': new_learned_today,
         'wrong_words': progress.filter(wrong_count__gt=0).count(),
@@ -916,7 +985,7 @@ def early_review(request):
     now = timezone.now()
     queryset = UserWordProgress.objects.filter(
         user=request.user, word__dictionary=dictionary, next_review_at__gt=now,
-    ).select_related('word')
+    ).exclude(status='retired').select_related('word')
     total = queryset.count()
     order = request.query_params.get('order', 'weak')
     if order == 'random':
@@ -1009,8 +1078,8 @@ def profile_summary(request):
     progress = UserWordProgress.objects.filter(user=request.user)
     dictionary_rows = progress.values('word__dictionary').annotate(
         learned=Count('id'),
-        mastered=Count('id', filter=Q(status='mastered')),
-        due=Count('id', filter=Q(next_review_at__lte=now)),
+        mastered=Count('id', filter=MASTERED_Q),
+        due=Count('id', filter=_due_q(now)),
         wrong=Count('id', filter=Q(wrong_count__gt=0)),
     )
     names = Dictionary.objects.in_bulk([row['word__dictionary'] for row in dictionary_rows])
@@ -1040,8 +1109,8 @@ def profile_summary(request):
             'answers': logs.count(),
             'active_days': len(active_days),
             'learned': progress.count(),
-            'mastered': progress.filter(status='mastered').count(),
-            'due': progress.filter(next_review_at__lte=now).count(),
+            'mastered': progress.filter(MASTERED_Q).count(),
+            'due': progress.filter(_due_q(now)).count(),
         },
         'daily': daily,
         'dictionaries': dictionaries,

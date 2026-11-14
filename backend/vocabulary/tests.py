@@ -19,7 +19,18 @@ from .email_codes import EmailDeliveryError
 from .models import (
     AnswerLog, Dictionary, EmailAddress, EmailVerification, UserDictionary, UserWordProgress, Word,
 )
-from .services import SentenceAudioError, schedule
+from .services import (
+    MASTERED_INTERVAL_DAYS,
+    NEW_WORD_HALVE_DUE,
+    NEW_WORD_LIMIT,
+    NEW_WORD_PAUSE_DUE,
+    RETIRE_INTERVAL_DAYS,
+    RETIRE_STREAK,
+    SentenceAudioError,
+    adaptive_new_limit,
+    schedule,
+    status_for,
+)
 
 PASSWORD = 'Str0ngPass!23'
 
@@ -826,6 +837,142 @@ class CefrImportTests(ApiTestCase):
         self.assertEqual(broken.cefr, '')
 
 
+class AdaptiveNewWordTests(ApiTestCase):
+    """复习积压时自动少给新词，避免「每天 20 个」把队列越拖越长。"""
+
+    def add_words(self, count, prefix='extra'):
+        return [
+            Word.objects.create(dictionary=self.dictionary, spelling=f'{prefix}{index}', meaning='补充词')
+            for index in range(count)
+        ]
+
+    def make_due(self, count):
+        words = self.add_words(count, prefix='due')
+        now = timezone.now()
+        for word in words:
+            UserWordProgress.objects.create(
+                user=self.user, word=word, status='learning', interval_days=1,
+                next_review_at=now - timedelta(minutes=5),
+                first_learned_at=now - timedelta(days=3),
+            )
+        return words
+
+    def test_limit_halves_then_pauses(self):
+        self.assertEqual(adaptive_new_limit(0), NEW_WORD_LIMIT)
+        self.assertEqual(adaptive_new_limit(NEW_WORD_HALVE_DUE - 1), NEW_WORD_LIMIT)
+        self.assertEqual(adaptive_new_limit(NEW_WORD_HALVE_DUE), 10)
+        self.assertEqual(adaptive_new_limit(NEW_WORD_PAUSE_DUE - 1), 10)
+        self.assertEqual(adaptive_new_limit(NEW_WORD_PAUSE_DUE), 0)
+        self.assertEqual(adaptive_new_limit(200), 0)
+
+    def test_no_backlog_keeps_full_budget(self):
+        self.add_words(30)
+        self.login()
+        self.enroll()
+        data = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(data['new_limit'], NEW_WORD_LIMIT)
+        self.assertEqual(data['new_limit_note'], '')
+        self.assertEqual(len(data['words']), NEW_WORD_LIMIT)
+
+    def test_backlog_halves_the_budget(self):
+        self.add_words(30)
+        self.make_due(NEW_WORD_HALVE_DUE)
+        self.login()
+        self.enroll()
+        data = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(data['due_reviews'], NEW_WORD_HALVE_DUE)
+        self.assertEqual(data['new_limit'], 10)
+        self.assertEqual(data['new_limit_base'], NEW_WORD_LIMIT)
+        self.assertIn('新词减到 10 个', data['new_limit_note'])
+        self.assertEqual(len(data['words']), 10)
+
+    def test_heavy_backlog_pauses_new_words(self):
+        self.add_words(30)
+        self.make_due(NEW_WORD_PAUSE_DUE)
+        self.login()
+        self.enroll()
+        data = self.client.get(f'/api/study/today?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(data['new_limit'], 0)
+        self.assertEqual(data['words'], [])
+        self.assertIn('新词暂停', data['new_limit_note'])
+
+        # 「再来 20 个」也不能绕过：先清复习。
+        extra = self.client.get(
+            f'/api/study/today?dictionary_id={self.dictionary.id}&extra=20',
+        ).data
+        self.assertEqual(extra['words'], [])
+
+
+class RetiredWordTests(ApiTestCase):
+    """归档：间隔够长或连对够多就不再进每日复习队列。"""
+
+    def retire_by_answers(self, word, times=RETIRE_STREAK):
+        for _ in range(times):
+            response = self.answer(word, 'good')
+            self.assertEqual(response.status_code, 200, response.data)
+        return response
+
+    def test_status_thresholds(self):
+        progress = UserWordProgress.objects.create(user=self.user, word=self.words[0])
+        progress.interval_days = MASTERED_INTERVAL_DAYS
+        progress.streak = 4
+        self.assertEqual(status_for(progress), 'mastered')
+
+        progress.interval_days = RETIRE_INTERVAL_DAYS
+        self.assertEqual(status_for(progress), 'retired')
+
+        progress.interval_days = 30
+        progress.streak = RETIRE_STREAK
+        self.assertEqual(status_for(progress), 'retired')
+
+    def test_streak_retires_and_leaves_the_review_queue(self):
+        self.login()
+        self.enroll()
+        response = self.retire_by_answers(self.words[0])
+        self.assertEqual(response.data['status'], 'retired')
+
+        progress = UserWordProgress.objects.get(user=self.user, word=self.words[0])
+        # 即使到期，归档的词也不再进复习队列
+        progress.next_review_at = timezone.now() - timedelta(days=1)
+        progress.save(update_fields=['next_review_at'])
+        review = self.client.get(f'/api/review/today?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(review['words'], [])
+        self.assertEqual(review['total'], 0)
+
+        stats = self.client.get(f'/api/statistics?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(stats['mastered_words'], 1)  # 归档计入已掌握
+        self.assertEqual(stats['retired_words'], 1)
+        self.assertEqual(stats['due_reviews'], 0)
+
+    def test_relearn_puts_it_back(self):
+        self.login()
+        self.enroll()
+        self.retire_by_answers(self.words[0])
+        progress = UserWordProgress.objects.get(user=self.user, word=self.words[0])
+        progress.next_review_at = timezone.now() - timedelta(days=1)
+        progress.save(update_fields=['next_review_at'])
+
+        response = self.client.post(f'/api/words/{self.words[0].id}/relearn')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['status'], 'learning')
+        self.assertEqual(response.data['interval_days'], 0)
+
+        review = self.client.get(f'/api/review/today?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(review['total'], 1)
+
+    def test_relearn_rejects_words_that_are_not_retired(self):
+        self.login()
+        self.enroll()
+        self.answer(self.words[0], 'good')
+        response = self.client.post(f'/api/words/{self.words[0].id}/relearn')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], '只有已归档的词才需要重新学习')
+
+    def test_relearn_needs_login(self):
+        response = self.client.post(f'/api/words/{self.words[0].id}/relearn')
+        self.assertEqual(response.status_code, 401)
+
+
 class KnownWordTests(ApiTestCase):
     def test_known_marks_mastered_and_undo_restores(self):
         self.login()
@@ -835,9 +982,10 @@ class KnownWordTests(ApiTestCase):
         )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data['interval_days'], 365)
-        self.assertEqual(response.data['status'], 'mastered')
+        # 标记「已会」等于归档：不再进每日复习队列。
+        self.assertEqual(response.data['status'], 'retired')
         self.assertTrue(response.data['is_skip'])
-        self.assertEqual(response.data['next_review_label'], '一年后')
+        self.assertEqual(response.data['next_review_label'], '已移出复习')
 
         log = AnswerLog.objects.get(user=self.user, word=self.words[0])
         self.assertTrue(log.is_skip)

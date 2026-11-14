@@ -28,6 +28,7 @@ const props = defineProps<{
   dictionaryName: string
   newLearnedToday: number
   newLimit: number
+  newLimitNote: string
   dueReviews: number
   canUndo: boolean
 }>()
@@ -297,7 +298,8 @@ onBeforeUnmount(() => {
         <button class="link-button back" @click="emit('back')">← {{ dictionaryName }}</button>
         <p class="eyebrow">
           <span class="kind-badge" :class="item.kind">{{ kindLabel }}</span>
-          今日新词 {{ newLearnedToday }}/{{ newLimit }}
+          <template v-if="newLimit > 0">今日新词 {{ newLearnedToday }}/{{ newLimit }}</template>
+          <template v-else>今天不排新词</template>
           <template v-if="dueReviews"> · 待复习 {{ dueReviews }}</template>
         </p>
       </div>
@@ -328,6 +330,8 @@ onBeforeUnmount(() => {
     <div class="bar study-bar" aria-hidden="true">
       <span :style="{ width: `${progress}%` }"></span>
     </div>
+
+    <p v-if="newLimitNote" class="budget-note">{{ newLimitNote }}</p>
 
     <section v-if="mode === 'card'" class="card">
       <div class="word-row">
@@ -456,7 +460,7 @@ onBeforeUnmount(() => {
 
     <div v-if="item.kind !== 'practice'" class="known-row">
       <button class="link-button known-button" :disabled="loading" @click="emit('known')">
-        我已经会了，标为掌握
+        我已经会了，移出复习
       </button>
     </div>
 

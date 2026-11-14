@@ -27,6 +27,7 @@ export const STATUS_LABELS: Record<string, string> = {
   new: '未学',
   learning: '学习中',
   mastered: '已掌握',
+  retired: '已归档',
 }
 
 /** Last list query per dictionary, so the detail page can return to it. */

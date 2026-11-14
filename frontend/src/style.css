@@ -685,6 +685,17 @@ label {
   margin: 14px 0 18px;
 }
 
+/* 复习积压时解释「今天为什么不是 20 个新词」 */
+.budget-note {
+  margin: -6px 0 14px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -1443,6 +1454,11 @@ label {
   color: var(--ok);
 }
 
+.word-status.retired {
+  background: #eef0f4;
+  color: #5a6472;
+}
+
 .pagination {
   display: flex;
   gap: 12px;
@@ -1517,6 +1533,23 @@ label {
 
 .detail-panel {
   margin-top: 18px;
+}
+
+/* 已归档的说明 + 重新学习入口 */
+.retired-note {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #eef7f2;
+  color: var(--ok);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.retired-note .link-button {
+  margin-left: 4px;
+  color: var(--brand-strong);
+  text-decoration: underline;
 }
 
 .detail-panel-head {

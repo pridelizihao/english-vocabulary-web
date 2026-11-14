@@ -21,7 +21,7 @@ backend/                       Django 项目
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
     management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples / annotate_cefr
-    tests.py                   后端用例（当前 81 个）
+    tests.py                   后端用例（当前 90 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
@@ -85,6 +85,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 - **掌握**：`interval_days >= 21` 才算 `mastered`（不是答对一次就算）。
 - **ease**：初始 2.5，区间 `[1.3, 3.2]`。
 - **每日新词预算**：`NEW_WORD_LIMIT = 20`，按 `first_learned_at` 当天计数；预算用完后 `/api/study/today` 返回空数组，前端据此显示「今日额度用完」。
+- **自适应新词**：额度不是无条件的 20 个，跟着到期复习量收口（`services.adaptive_new_limit`）：到期 < 40 给满 20；≥ 40 给 10（`NEW_WORD_HALVED`）；≥ 80（`NEW_WORD_PAUSE_DUE`）当天不给新词。接口返回的 `new_limit` 是**当天实际额度**，`new_limit_base` 是 20，`new_limit_note` 是给用户看的中文说明（没削减就是空串）。复习积压到停发新词时，`extra`（再来 20 个）也不能绕过——每天 20 新词配 50 复习上限，数学上追不上，所以必须有这个收口。
 - **复习队列**：`next_review_at <= now`，上限 `REVIEW_LIMIT = 50`。
 - **额外新词**：每日基础 20 个，用户可主动要「再来 20 个」，每天额外上限 `EXTRA_NEW_LIMIT = 60`；额外新词在 `AnswerLog.is_extra` 里标记。
 - **练习**：`practice: true` 的作答只写 `AnswerLog`，绝不改动 `UserWordProgress`（间隔、streak 都不变）。
@@ -94,7 +95,9 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 - **统计口径**：`statistics.today_completed` = 今日**非练习**答题条数；所有统计（个人面板、额外新词用量、答题历史）都必须排除 `undone_at` 非空的记录。
 - **错词**：`wrong_count > 0` 即错词；错词练习走 `practice` 通道，只记录不改间隔。
 - **新词顺序**：默认 `core`：CEFR 等级 B1 → B2 → C1 → 未收录 → A2 → A1，`is_proper`（月份、人名、缩写）永远最后；同档内按 `(id * 1103515245 + 每天种子) mod 2^31-1` 打乱（同一天刷新顺序不变，隔天变），避免读成字母表；另外支持 `alpha` / `random`。CEFR 来自 `data/sources/Oxford.json`，CSV 的 `cefr` 列或 `annotate_cefr` 命令写入。
-- **标记已会**：作答时带 `known: true` 直接把词设为 `mastered`、间隔 365 天，日志记 `is_skip=True`（rating 固定 `easy`）；撤销同样按快照恢复。
+- **标记已会**：作答时带 `known: true` 直接把词设为**归档**（`status='retired'`）、间隔 365 天，日志记 `is_skip=True`（rating 固定 `easy`）；撤销同样按快照恢复。
+- **归档（退休）**：`interval_days >= 180`（`RETIRE_INTERVAL_DAYS`）或 `streak >= 8`（`RETIRE_STREAK`）→ `status='retired'`，**不再进每日复习队列**（`_due_q()` 排除）。判定集中在 `services.status_for()`，不要在视图里另写一套。归档词仍留在词表里，可以手动「重新学习」（`POST /api/words/{id}/relearn`，间隔清零、马上到期）。
+- **状态取值**：`new` / `learning` / `mastered`（间隔 ≥ 21 天）/ `retired`（已归档）。统计口径里「已掌握」= `mastered` + `retired`（`MASTERED_STATUSES` / `views.MASTERED_Q`）；`retired_words` 单独给出。**新增任何按状态过滤的查询都要想清楚包不包含 retired**——到期队列、提前复习、下次复习时间都不包含它。
 - **个人词典**：`Dictionary.owner` 非空即个人词典；列表/详情/enroll/统计/答题共用同一可见性判断（官方 + 自己的）。
 - **单词唯一**：`(dictionary, Lower(spelling))`，`Abandon` 与 `abandon` 是同一个词，导入时合并。
 - **例句**：`Word.example` 是英文例句，`Word.example_translation` 是中文翻译；批量填充只走 `enrich_examples`（数据源 `data/examples.json`），不要在教学流程里现生成。
@@ -148,7 +151,8 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 | GET | `/api/review/today?dictionary_id=` | 到期复习 |
 | GET | `/api/review/early?dictionary_id=&order=weak\|due\|random&limit=` | 提前复习（练习，不改 SRS） |
 | GET | `/api/review/wrong?dictionary_id=&limit=&order=wrong\|recent` | 错词列表（练习用） |
-| POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?, client_token?, known?}`；practice 只记录，known 直接标掌握（365 天） |
+| POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?, client_token?, known?}`；practice 只记录，known 直接归档（365 天） |
+| POST | `/api/words/{word_id}/relearn` | 把已归档的词放回复习队列（间隔清零、马上到期）；非归档词 400 |
 | POST | `/api/answers/{log_id}/undo` | 撤销最近一次作答（10 分钟内） |
 | GET | `/api/profile/summary?days=371` | 个人学习面板：每日/连续天数/按词典（days 支持 7–371） |
 | GET | `/api/profile/insights?days=180` | 保持率曲线、累计进度、评分校准（days 支持 7–371） |
@@ -186,7 +190,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 81 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 90 个）。
 - 改填空/SRS/热力图/朗读/词表/图表/浮层定位 → 改 `frontend/tests/*.test.mjs`（当前 51 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。

@@ -36,6 +36,8 @@ const {
   markKnown,
   undo,
   canUndo,
+  newLimit,
+  newLimitNote,
   loadDone,
   loadDictionaries,
   clearError,
@@ -136,7 +138,7 @@ function onWrong() {
         <span class="brand-mark">W</span>
         <span class="brand-text">
           <strong>英语单词背诵</strong>
-          <small>间隔重复 · 每天二十个</small>
+          <small>间隔重复 · 复习优先</small>
         </span>
       </a>
       <div v-if="user" class="user-bar">
@@ -172,7 +174,8 @@ function onWrong() {
       :loading="loading"
       :dictionary-name="activeDictionary?.name ?? ''"
       :new-learned-today="stats?.today_new ?? 0"
-      :new-limit="stats?.new_limit ?? 20"
+      :new-limit="newLimit"
+      :new-limit-note="newLimitNote"
       :due-reviews="stats?.due_reviews ?? 0"
       :can-undo="canUndo"
       @rate="rate"

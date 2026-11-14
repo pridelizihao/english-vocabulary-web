@@ -84,7 +84,12 @@ class UserWordProgress(models.Model):
     `first_learned_at` is used to enforce the daily new-word budget.
     """
 
-    STATUS_CHOICES = [('new', '未开始'), ('learning', '学习中'), ('mastered', '已掌握')]
+    STATUS_CHOICES = [
+        ('new', '未开始'),
+        ('learning', '学习中'),
+        ('mastered', '已掌握'),
+        ('retired', '已归档'),
+    ]
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     word = models.ForeignKey(Word, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')

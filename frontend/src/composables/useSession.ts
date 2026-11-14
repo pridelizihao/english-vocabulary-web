@@ -56,6 +56,10 @@ const order = ref<Order>(readStored<Order>(ORDER_KEY, ['core', 'alpha', 'random'
 const bootstrapped = ref(false)
 const lastAnswer = ref<LastAnswer | null>(null)
 const answerToken = ref('')
+// 复习积压导致今天新词被削减时，服务器给的一句说明；没削减就是空串。
+const newLimitNote = ref('')
+// 今天实际能学的新词数（服务器说了算，积压多时会小于 20）。
+const newLimit = ref(20)
 
 const currentItem = computed<StudyItem | null>(() => queue.value[index.value] ?? null)
 const total = computed(() => queue.value.length)
@@ -226,6 +230,8 @@ async function startStudy(dictionaryId: number, options: { extra?: number } = {}
     index.value = 0
     completed.value = 0
     stats.value = currentStats
+    newLimit.value = study.new_limit
+    newLimitNote.value = study.new_limit_note
     if (!queue.value.length) {
       navigate(`/done/${dictionaryId}`)
     } else {
@@ -600,6 +606,10 @@ export function useSession() {
     currentItem,
     total,
     canUndo,
+    lastAnswer,
+    answerToken,
+    newLimit,
+    newLimitNote,
     bootstrap,
     loadDictionaries,
     signIn,

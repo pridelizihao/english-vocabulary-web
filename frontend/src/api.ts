@@ -4,7 +4,7 @@ export type Rating = 'again' | 'hard' | 'good' | 'easy'
 export type RatingPreview = Record<Rating, string>
 export type WordFilter = 'all' | 'new' | 'learning' | 'mastered' | 'due' | 'wrong'
 export type WordSort = 'alpha' | 'recent' | 'due' | 'wrong'
-export type ProgressStatus = 'new' | 'learning' | 'mastered'
+export type ProgressStatus = 'new' | 'learning' | 'mastered' | 'retired'
 export type StudyOrder = 'core' | 'alpha' | 'random'
 
 export type User = { id: number; username: string; email: string; is_staff: boolean }
@@ -76,7 +76,12 @@ export type StudyToday = {
   dictionary_id: number
   words: Word[]
   total: number
+  /** 今天的实际新词额度：复习积压多时会自动减少，甚至为 0。 */
   new_limit: number
+  /** 满额是多少（固定 20），用来显示「10/20」时区分是不是被削减。 */
+  new_limit_base: number
+  /** 被削减时的中文说明，没削减就是空串。 */
+  new_limit_note: string
   new_learned_today: number
   extra_used_today: number
   extra_limit: number
@@ -147,6 +152,8 @@ export type Statistics = {
   total_words: number
   learned_words: number
   mastered_words: number
+  /** 已归档（间隔够长或连对够多，不再进每日复习）的词数。 */
+  retired_words: number
   due_reviews: number
   today_completed: number
   today_new: number
@@ -431,6 +438,11 @@ export async function dictionaryWords(dictionaryId: number, query: string) {
 
 export async function wordDetail(wordId: number) {
   return request<WordDetail>(`/words/${wordId}`)
+}
+
+/** 把已归档的词放回复习队列（间隔清零，马上到期）。 */
+export async function relearnWord(wordId: number) {
+  return request<Progress>(`/words/${wordId}/relearn`, { method: 'POST' })
 }
 
 export async function wrongWords(dictionaryId: number, limit = 20) {

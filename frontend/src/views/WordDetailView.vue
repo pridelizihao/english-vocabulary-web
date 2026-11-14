@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 
 import type { WordDetail } from '../api'
+import * as api from '../api'
 import { useSpeech } from '../composables/useSpeech'
 import { useSession } from '../composables/useSession'
 import { navigate } from '../lib/router'
@@ -11,9 +12,10 @@ import { browseMemory, formatMoment, primaryPos, statusLabel } from '../lib/word
 
 const props = defineProps<{ dictionaryId: number; wordId: number }>()
 
-const { loadWord, loading } = useSession()
+const { loadWord, loading, reportError, notice } = useSession()
 const { speak, speakSentence, sentenceBusy, prefetch, message } = useSpeech()
 const detail = ref<WordDetail | null>(null)
+const relearning = ref(false)
 
 const exampleParts = computed(() => (detail.value ? splitExample(detail.value.example, detail.value.spelling) : []))
 const shortMeaning = computed(() => (detail.value ? primaryMeaning(detail.value.meaning) : ''))
@@ -35,6 +37,21 @@ function backToWords() {
 function readAloud() {
   if (!detail.value) return
   speak(detail.value.spelling, [detail.value.audio_url, detail.value.pronunciation_url])
+}
+
+// 已归档的词不再进每日复习；想重学就把它放回队列（间隔清零、马上到期）。
+async function relearn() {
+  if (!detail.value || relearning.value) return
+  relearning.value = true
+  try {
+    await api.relearnWord(detail.value.id)
+    await load()
+    notice.value = '已放回复习队列，下次打开背词就会出现'
+  } catch (cause) {
+    reportError(cause)
+  } finally {
+    relearning.value = false
+  }
 }
 
 onMounted(load)
@@ -91,6 +108,12 @@ watch(() => props.wordId, load)
           <div><strong>{{ progress.streak }}</strong><span>连续答对</span></div>
         </div>
         <p v-else class="muted">还没有学过这个词，去背词时它会出现。</p>
+        <p v-if="progress?.status === 'retired'" class="retired-note">
+          这个词间隔已经很长（或连续答对足够多次），已移出每日复习队列，不会再来打扰你。
+          <button class="link-button" :disabled="relearning" @click="relearn">
+            {{ relearning ? '正在放回…' : '重新学习' }}
+          </button>
+        </p>
       </section>
 
       <section v-if="progress" class="panel detail-panel">

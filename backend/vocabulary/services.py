@@ -30,6 +30,16 @@ MAX_EASE = 3.2
 MASTERED_INTERVAL_DAYS = 21
 AGAIN_DELAY = timedelta(minutes=10)
 MAX_INTERVAL_DAYS = 365
+# 归档（退休）：到了这个程度就不再进每日复习队列，只在词表里留存。
+# 两条任一满足即归档：间隔拉到半年，或连续答对 8 次。
+RETIRE_INTERVAL_DAYS = 180
+RETIRE_STREAK = 8
+# 「已掌握」的统计口径包含已归档（归档必然也掌握过）。
+MASTERED_STATUSES = ('mastered', 'retired')
+# 自适应新词：到期复习积压越多，当天给的新词越少，避免越积越多。
+NEW_WORD_HALVE_DUE = 40
+NEW_WORD_PAUSE_DUE = 80
+NEW_WORD_HALVED = 10
 # An answer can be undone only within this window (see views.undo_answer).
 UNDO_WINDOW_MINUTES = 10
 RATINGS = ('again', 'hard', 'good', 'easy')
@@ -163,8 +173,34 @@ def schedule(progress, rating, now=None):
         progress.ease = min(MAX_EASE, ease + 0.15)
         progress.interval_days = _easy_interval(progress.streak, interval, progress.ease)
     progress.next_review_at = now + timedelta(days=progress.interval_days)
-    progress.status = 'mastered' if progress.interval_days >= MASTERED_INTERVAL_DAYS else 'learning'
+    progress.status = status_for(progress)
     return progress
+
+
+def status_for(progress):
+    """按间隔与连对次数决定状态：归档 > 掌握 > 学习中。
+
+    归档（retired）表示「不用再进每日复习队列」——间隔已经拉到半年，或者
+    连续答对 8 次。它会保留在词表里，想复习可以手动「重新学习」。
+    """
+    if progress.interval_days >= RETIRE_INTERVAL_DAYS or progress.streak >= RETIRE_STREAK:
+        return 'retired'
+    if progress.interval_days >= MASTERED_INTERVAL_DAYS:
+        return 'mastered'
+    return 'learning'
+
+
+def adaptive_new_limit(due_reviews, base_limit=NEW_WORD_LIMIT):
+    """到期复习积压越多，当天给的新词越少。
+
+    每天 20 个新词配上 50 的复习上限，数学上追不上（会一直积压），
+    所以这里跟着复习量收口：积压过半就减半，积压太多就先清复习。
+    """
+    if due_reviews >= NEW_WORD_PAUSE_DUE:
+        return 0
+    if due_reviews >= NEW_WORD_HALVE_DUE:
+        return min(base_limit, NEW_WORD_HALVED)
+    return base_limit
 
 
 def preview_intervals(progress=None, now=None):

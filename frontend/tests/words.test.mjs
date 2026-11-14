@@ -72,6 +72,7 @@ test('primaryPos keeps only the first tag', () => {
 test('statusLabel falls back to unlearned', () => {
   assert.equal(statusLabel('mastered'), '已掌握')
   assert.equal(statusLabel('learning'), '学习中')
+  assert.equal(statusLabel('retired'), '已归档')
   assert.equal(statusLabel('new'), '未学')
   assert.equal(statusLabel('unknown'), '未学')
 })
