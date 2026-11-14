@@ -16,7 +16,14 @@ import {
   retentionVerdict,
   trimLeadingEmpty,
 } from '../lib/chart'
-import { buildHeatmap, dayLabel, heatLevel, recentDays, WEEKDAY_LABELS } from '../lib/profile'
+import {
+  buildHeatmap,
+  dayLabel,
+  heatLevel,
+  recentDays,
+  tooltipPlacement,
+  WEEKDAY_LABELS,
+} from '../lib/profile'
 import { navigate } from '../lib/router'
 
 const {
@@ -28,6 +35,7 @@ const heatWrap = ref<HTMLElement | null>(null)
 const heatWidth = ref(0)
 const heatCell = ref(12)
 const heatGap = ref(3)
+let tapTimer: number | null = null
 // 一周一列；容器越窄显示的周数越少，格子才能保持看得清的尺寸。
 const heatWeeks = computed(() => {
   if (!heatWidth.value) return 53
@@ -145,6 +153,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   observer?.disconnect()
   stopEmailTimer()
+  clearTapTimer()
 })
 
 watch(heatWrap, (element) => {
@@ -177,11 +186,40 @@ function showTooltip(event: MouseEvent, day: ProfileDay | null) {
     tooltip.value = null
     return
   }
-  tooltip.value = { x: event.clientX, y: event.clientY, day }
+  const { left, top } = tooltipPlacement(
+    event.clientX,
+    event.clientY,
+    window.innerWidth,
+    window.innerHeight,
+  )
+  tooltip.value = { x: left, y: top, day }
 }
 
 function hideTooltip() {
+  // 触摸屏上没有「移出」这件事，点一下之后由定时器负责收起；
+  // 否则浏览器补发的 mouseleave 会立刻把刚弹出的提示关掉。
+  if (tapTimer !== null) return
   tooltip.value = null
+}
+
+// 手机没有 hover：点格子看数字，3.5 秒后自己收起来，不挡住下面的内容。
+function tapTooltip(event: MouseEvent, day: ProfileDay | null) {
+  clearTapTimer()
+  if (!day) {
+    tooltip.value = null
+    return
+  }
+  showTooltip(event, day)
+  tapTimer = window.setTimeout(() => {
+    tapTimer = null
+    tooltip.value = null
+  }, 3500)
+}
+
+function clearTapTimer() {
+  if (tapTimer === null) return
+  window.clearTimeout(tapTimer)
+  tapTimer = null
 }
 
 function review(item: ProfileDictionary) {
@@ -312,6 +350,7 @@ function review(item: ProfileDictionary) {
                     :title="day ? `${day.date}：${day.answers} 次` : ''"
                     @mouseenter="showTooltip($event, day)"
                     @mouseleave="hideTooltip"
+                    @click="tapTooltip($event, day)"
                   ></div>
                 </template>
               </div>

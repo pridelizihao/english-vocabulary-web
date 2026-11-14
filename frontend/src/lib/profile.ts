@@ -80,3 +80,28 @@ export function buildHeatmap(daily: ProfileDay[]): Heatmap {
 }
 
 export const WEEKDAY_LABELS = ['一', '', '三', '', '五', '', '日']
+
+/**
+ * 热力图浮层的位置：把提示框夹在视口内。
+ * 桌面上鼠标在格子里，浮层飘出右边缘无所谓；手机上点最右/最下那一列时，
+ * 浮层会直接跑到屏幕外，所以统一先夹一次。
+ */
+export function tooltipPlacement(
+  x: number,
+  y: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  boxWidth = 152,
+  boxHeight = 84,
+) {
+  const margin = 8
+  return {
+    left: clamp(x, margin, Math.max(margin, viewportWidth - boxWidth - margin)),
+    top: clamp(y, margin, Math.max(margin, viewportHeight - boxHeight - margin)),
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min
+  return Math.min(Math.max(value, min), max)
+}

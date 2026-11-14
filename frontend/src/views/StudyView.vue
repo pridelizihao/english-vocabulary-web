@@ -17,6 +17,7 @@ import {
   splitExample,
   type StudyItem,
 } from '../lib/study'
+import { primaryPos } from '../lib/words'
 
 const props = defineProps<{
   item: StudyItem
@@ -117,6 +118,13 @@ function focusPreviousHidden(before: number) {
   if (previous) focusSlot(previous.index)
 }
 
+// 手机上软键盘会占掉半个屏幕，并把底部操作区顶上去。这一题已经定论时就把
+// 焦点交还给页面，键盘自己收起，评分/继续按钮才能露出来。
+function dismissKeyboard() {
+  const active = document.activeElement as HTMLElement | null
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) active.blur()
+}
+
 function onInput(slotIndex: number, event: Event) {
   const input = event.target as HTMLInputElement
   const value = input.value.slice(-1)
@@ -154,6 +162,7 @@ function submitCloze() {
   if (!complete.value || props.loading) return
   if (checkCloze(word.value.spelling, answer.value)) {
     result.value = 'correct'
+    dismissKeyboard()
     return
   }
   attempts.value += 1
@@ -163,12 +172,14 @@ function submitCloze() {
   }, 500)
   // First miss: keep the answer hidden and let the learner think again.
   result.value = attempts.value >= 2 ? 'wrong' : 'retry'
+  if (result.value === 'wrong') dismissKeyboard()
 }
 
 function revealAnswer() {
   attempts.value = Math.max(attempts.value, 2)
   answer.value = Array.from(word.value.spelling)
   result.value = 'wrong'
+  dismissKeyboard()
 }
 
 function editAgain() {
@@ -327,7 +338,7 @@ onBeforeUnmount(() => {
       </div>
       <p class="phonetic">
         {{ word.phonetic || '暂无音标' }}
-        <span v-if="word.part_of_speech" class="pos">{{ word.part_of_speech }}</span>
+        <span v-if="word.part_of_speech" class="pos">{{ primaryPos(word.part_of_speech) }}</span>
       </p>
       <p v-if="speechMessage" class="speech-hint">{{ speechMessage }}</p>
 
@@ -383,7 +394,10 @@ onBeforeUnmount(() => {
             maxlength="1"
             autocomplete="off"
             autocapitalize="none"
+            autocorrect="off"
+            enterkeyhint="go"
             spellcheck="false"
+            :aria-label="`第 ${slot.index + 1} 个字母`"
             @input="onInput(slot.index, $event)"
             @keydown="onSlotKeydown(slot.index, $event)"
           />

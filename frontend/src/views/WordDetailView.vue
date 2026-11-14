@@ -7,7 +7,7 @@ import { useSession } from '../composables/useSession'
 import { navigate } from '../lib/router'
 import { sentenceAudioUrl } from '../lib/speech'
 import { formatDue, primaryMeaning, splitExample } from '../lib/study'
-import { browseMemory, formatMoment, statusLabel } from '../lib/words'
+import { browseMemory, formatMoment, primaryPos, statusLabel } from '../lib/words'
 
 const props = defineProps<{ dictionaryId: number; wordId: number }>()
 
@@ -57,7 +57,7 @@ watch(() => props.wordId, load)
         </div>
         <p class="phonetic">
           {{ detail.phonetic || '暂无音标' }}
-          <span v-if="detail.part_of_speech" class="pos">{{ detail.part_of_speech }}</span>
+          <span v-if="detail.part_of_speech" class="pos">{{ primaryPos(detail.part_of_speech) }}</span>
         </p>
         <p v-if="message" class="speech-hint">{{ message }}</p>
 

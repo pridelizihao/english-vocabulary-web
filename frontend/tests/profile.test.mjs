@@ -7,6 +7,7 @@ import {
   heatLevel,
   maxAnswers,
   recentDays,
+  tooltipPlacement,
   WEEKDAY_LABELS,
 } from '../src/lib/profile.ts'
 
@@ -74,4 +75,20 @@ test('weekday labels match the seven heatmap rows', () => {
   assert.equal(WEEKDAY_LABELS.length, 7)
   assert.equal(WEEKDAY_LABELS[0], '一')
   assert.equal(WEEKDAY_LABELS[6], '日')
+})
+test('tooltipPlacement keeps the tooltip inside the viewport', () => {
+  // 正常点位原样保留
+  assert.deepEqual(tooltipPlacement(100, 80, 390, 844), { left: 100, top: 80 })
+  // 点最右一格：右边缘要收回来，不能跑出屏幕
+  const right = tooltipPlacement(388, 300, 390, 844)
+  assert.equal(right.left, 390 - 152 - 8)
+  // 点最下面一行：底部同样收回来
+  const bottom = tooltipPlacement(200, 840, 390, 844)
+  assert.equal(bottom.top, 844 - 84 - 8)
+})
+
+test('tooltipPlacement clamps to the margin on tiny viewports', () => {
+  // 屏幕比浮层还窄时，宁可贴左上角也不出现负坐标
+  assert.deepEqual(tooltipPlacement(-40, -40, 100, 100), { left: 8, top: 8 })
+  assert.deepEqual(tooltipPlacement(0, 0, 100, 100), { left: 8, top: 8 })
 })

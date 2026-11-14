@@ -21,7 +21,7 @@ backend/                       Django 项目
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
     management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples / annotate_cefr
-    tests.py                   后端用例（当前 62 个）
+    tests.py                   后端用例（当前 81 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
@@ -170,10 +170,24 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 - 图表不引第三方库：坐标计算与结论文案都在 `lib/chart.ts`，模板只画 SVG；新增图表先加纯函数 + `tests/chart.test.mjs` 用例。
 - 文案全中文；错误优先用后端 `detail`。
 
+### 移动端 / 触屏（`style.css` 末尾的 media 块）
+
+桌面版的交互前提是「鼠标悬停 + 键盘」，手机上都没有，所以是换一套操作方式，不是把桌面缩小：
+
+- **评分吸底**：`≤720px` 时 `.ratings` 变成 `position: fixed` 的四宫格底栏（`z-index: 30`，带 `env(safe-area-inset-bottom)`）。它是 `.answer` 里的元素，只在翻开答案后才存在。页面末尾的让位靠 `.study-section:has(.ratings)` 的 `padding-bottom`；改卡片结构时别忘了这根条会盖住最后 100px。
+- **整页是一屏一题**：`≤720px` 时 `.page` 是 `display: flex; min-height: 100dvh`，`.study-section` 与 `.card` 用 `flex: 1` 铺满，卡片内容垂直居中。`.card` 因此是 flex 容器，**子按钮想保持内容宽度就得 `align-self: center`**（`align-items: center` 已设，需要满宽的子元素逐个 `stretch`），否则会被拉成一整行。
+- **触屏不显示键盘提示**：`(hover: none) and (pointer: coarse)` 下 `kbd` 与 `.keyboard-hint` 全部隐藏。加新的快捷键提示不用另做判断，用 `<kbd>` 包住即可。
+- **`hover` 要关掉**：触屏上 `:hover` 会粘住，`(hover: none)` 块里把 `transform` 复位，并给 `:active` 一点按下的反馈。
+- **输入框字号 ≥16px**：小于它 iOS 聚焦时会自动放大整页，且缩不回来。`input` 基础样式已固定 16px，别在 label 上把字号改小再让输入框继承。
+- **安全区**：`index.html` 的 viewport 带 `viewport-fit=cover`，`.page` 与吸底条用 `env(safe-area-inset-*)` 让开刘海和手势条；没有这个 meta，`env()` 在 iPhone 上恒为 0。
+- **点按浮层**：热力图的格子同时绑 `@mouseenter`（桌面）和 `@click`（触屏，3.5 秒自动收起）；触摸时浏览器补发的 `mouseleave` 会在 `tapTimer` 存在时被忽略，否则提示刚出现就被关掉。位置统一经 `lib/profile.ts` 的 `tooltipPlacement()` 夹进视口。
+- **别用只靠 hover 的交互**：移动端不存在悬停，任何「鼠标移上去才有」的信息都要有可点的替代（参照热力图）。
+- 验证方式：headless Chrome + CDP 的 `Emulation.setDeviceMetricsOverride` + `setTouchEmulationEnabled` 才能让 `(hover: none)` 生效，桌面窗口缩小不会触发这些规则。
+
 ## 8. 测试与提交
 
 - 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 81 个）。
-- 改填空/SRS/热力图/朗读/词表/图表 → 改 `frontend/tests/*.test.mjs`（当前 49 个）。
+- 改填空/SRS/热力图/朗读/词表/图表/浮层定位 → 改 `frontend/tests/*.test.mjs`（当前 51 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
 
@@ -193,6 +207,9 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 - 忘记密码只覆盖「已绑定邮箱」的账号：老账号要先在个人面板/接口里绑定邮箱（`/api/auth/email/send` + `verify`，purpose=bind），否则 `reset` 只会静默成功但收不到信。
 - `/api/profile/insights` 的评分校准是「相邻两次作答配对」的简化模型：它衡量的是「自评后隔一段时间还想得起来」，不是严格的记忆强度估计；样本少于 8 次的档位前端只显示「样本还少」。
 - 保持率与校准都依赖 `AnswerLog`，所以练习（practice）和撤销（undone）必须继续排除，否则曲线会失真。
+- 移动端已做适配（吸底评分、抽屉式布局、安全区、触屏点击、点按热力图），但**没有在真机上跑过**，验证靠 headless Chrome 的手机模拟（390×844 / 320×568）。已知没覆盖的：iOS Safari 软键盘弹出时吸底条的实际位置、地址栏收起/展开引起的 `dvh` 变化、微信内置浏览器的语音接口差异。真机上遇到问题优先看这几处。
+- 还不是 PWA：没有 manifest / Service Worker，不能加到桌面离线用，也没有每日提醒。这仍是留存上最大的缺口。
+- 桌面与手机共用一套 `style.css`，断点在 `≤720px`（手机）/ `≤380px`（小屏）/ 横屏窄高；没有按设备拆样式表。
 
 ## 10. 踩坑清单
 
