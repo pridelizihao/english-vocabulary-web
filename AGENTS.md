@@ -21,7 +21,7 @@ backend/                       Django 项目
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
     management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples / annotate_cefr
-    tests.py                   后端用例（当前 90 个）
+    tests.py                   后端用例（当前 91 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
@@ -190,7 +190,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 90 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 91 个）。
 - 改填空/SRS/热力图/朗读/词表/图表/浮层定位 → 改 `frontend/tests/*.test.mjs`（当前 51 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。

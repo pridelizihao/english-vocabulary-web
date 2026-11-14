@@ -41,7 +41,9 @@ const description = computed(() => {
         ? `新词已经全部学过，还有 ${props.stats.due_reviews} 个到期复习在等你。`
         : '新词已经全部学过，接下来靠复习巩固。'
     case 'daily-limit':
-      return '每天 20 个新词更容易记牢。明天再来，或者先做一轮复习。'
+      // 复习积压时额度会被削减，服务器给了具体原因（例如「先清复习，新词暂停一天」）。
+      return props.stats?.new_limit_note
+        || `今天 ${props.stats?.new_limit ?? 20} 个新词已经学完了，明天再来，或者先做一轮复习。`
     default:
       return props.completed > 0
         ? `本次答题 ${props.completed} 次。答错的词已经安排在十分钟后重新出现。`
@@ -59,6 +61,8 @@ const extraLeft = computed(() =>
 
 const canStudyNew = computed(() => {
   if (!props.stats) return false
+  // 额度被削减到 0（复习积压太多）时，不提供「再来 20 个」——按了也拿不到。
+  if (props.stats.new_limit <= 0) return false
   const budgetLeft = props.stats.today_new < props.stats.new_limit
   return props.stats.remaining_new > 0 && (budgetLeft || extraLeft.value > 0)
 })
@@ -85,8 +89,8 @@ const reviewButtonLabel = computed(() =>
         <strong>{{ completed }}</strong>
         <span>本次答题</span>
       </div>
-      <div title="今天第一次学习的单词数 / 每日新词上限">
-        <strong>{{ stats.today_new }}/{{ stats.new_limit }}</strong>
+      <div title="今天第一次学习的单词数 / 今日新词额度">
+        <strong>{{ stats.new_limit > 0 ? `${stats.today_new}/${stats.new_limit}` : '暂停' }}</strong>
         <span>今日新词</span>
       </div>
       <div title="复习间隔达到 21 天（约连续答对 5 次）">

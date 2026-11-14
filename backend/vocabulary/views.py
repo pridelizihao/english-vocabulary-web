@@ -947,6 +947,9 @@ def statistics(request):
         .values_list('next_review_at', flat=True).first()
     )
     new_learned_today = progress.filter(first_learned_at__date=today).count()
+    due_now = progress.filter(_due_q(now)).count()
+    # 和学习页保持同一口径：复习积压时额度会被削减。
+    daily_limit = adaptive_new_limit(due_now)
     active_logs = AnswerLog.objects.filter(user=request.user, undone_at__isnull=True)
     extra_used_today = active_logs.filter(
         is_new=True, is_extra=True, created_at__date=today,
@@ -957,11 +960,13 @@ def statistics(request):
         'learned_words': learned,
         'mastered_words': progress.filter(MASTERED_Q).count(),
         'retired_words': progress.filter(status='retired').count(),
-        'due_reviews': progress.filter(_due_q(now)).count(),
+        'due_reviews': due_now,
         'today_completed': today_completed,
         'today_new': new_learned_today,
         'wrong_words': progress.filter(wrong_count__gt=0).count(),
-        'new_limit': NEW_WORD_LIMIT,
+        'new_limit': daily_limit,
+        'new_limit_base': NEW_WORD_LIMIT,
+        'new_limit_note': _adaptive_note(daily_limit, due_now),
         'remaining_new': max(total - learned, 0),
         'progress_percent': round(learned / total * 100, 1) if total else 0,
         'next_review_at': next_review,

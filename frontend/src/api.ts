@@ -157,7 +157,10 @@ export type Statistics = {
   due_reviews: number
   today_completed: number
   today_new: number
+  /** 今天的实际新词额度，复习积压时会被削减（和学习页同一口径）。 */
   new_limit: number
+  new_limit_base: number
+  new_limit_note: string
   remaining_new: number
   progress_percent: number
   next_review_at: string | null

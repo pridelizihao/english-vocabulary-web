@@ -886,6 +886,18 @@ class AdaptiveNewWordTests(ApiTestCase):
         self.assertIn('新词减到 10 个', data['new_limit_note'])
         self.assertEqual(len(data['words']), 10)
 
+    def test_statistics_reports_the_same_adaptive_limit(self):
+        """完成页读的是 /api/statistics，口径必须和学习页一致。"""
+        self.add_words(30)
+        self.make_due(NEW_WORD_HALVE_DUE)
+        self.login()
+        self.enroll()
+        stats = self.client.get(f'/api/statistics?dictionary_id={self.dictionary.id}').data
+        self.assertEqual(stats['due_reviews'], NEW_WORD_HALVE_DUE)
+        self.assertEqual(stats['new_limit'], 10)
+        self.assertEqual(stats['new_limit_base'], NEW_WORD_LIMIT)
+        self.assertIn('新词减到 10 个', stats['new_limit_note'])
+
     def test_heavy_backlog_pauses_new_words(self):
         self.add_words(30)
         self.make_due(NEW_WORD_PAUSE_DUE)
