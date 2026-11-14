@@ -42,6 +42,8 @@ const emit = defineEmits<{
 }>()
 
 const revealed = ref(false)
+// 卡片正面直接认输：没想起来就先看答案，这一题记「忘记了」，不再让人自评。
+const gaveUp = ref(false)
 const answer = ref<string[]>([])
 const result = ref<'correct' | 'wrong' | null>(null)
 const shaking = ref(false)
@@ -87,6 +89,7 @@ const progress = computed(() => (props.total ? Math.round((props.index / props.t
 function reset() {
   stopSpeech()
   revealed.value = false
+  gaveUp.value = false
   result.value = null
   shaking.value = false
   attempts.value = 0
@@ -220,10 +223,17 @@ function primaryAction() {
   submitCloze()
 }
 
-/** 卡片模式：自评。 */
-function emitRate(rating: Rating) {
+/** 卡片模式：自评。`revealed` 表示这题是「没想起来、看了答案」才过的。 */
+function emitRate(rating: Rating, revealed = false) {
   if (props.loading) return
-  emit('rate', { mode: 'card', rating })
+  emit('rate', { mode: 'card', rating, revealed })
+}
+
+/** 正面按「想不起来」：直接看答案，这一题记「忘记了」。 */
+function giveUp() {
+  if (props.loading) return
+  revealed.value = true
+  gaveUp.value = true
 }
 
 /** 填空模式：只交证据，评多少由服务器按「错几次 / 看没看答案」决定。 */
@@ -279,9 +289,25 @@ function onWindowKeydown(event: KeyboardEvent) {
   // Let Enter/Space on a focused button behave like a normal click.
   if (target?.tagName === 'BUTTON') return
   if (props.mode === 'card') {
-    if (!revealed.value && (event.key === ' ' || event.key === 'Enter')) {
-      event.preventDefault()
-      revealed.value = true
+    if (!revealed.value) {
+      // 正面两条路：空格 = 想起来了（看答案核实），1 = 没想起来。
+      if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault()
+        revealed.value = true
+        return
+      }
+      if (event.key === '1') {
+        event.preventDefault()
+        giveUp()
+      }
+      return
+    }
+    if (gaveUp.value) {
+      // 已经看过答案、记了「忘记了」，只剩继续。
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        emitRate('again', true)
+      }
       return
     }
     if (revealed.value) {
@@ -363,9 +389,14 @@ onBeforeUnmount(() => {
       </p>
       <p v-if="speechMessage" class="speech-hint">{{ speechMessage }}</p>
 
-      <button v-if="!revealed" class="primary wide reveal-button" :disabled="loading" @click="revealed = true">
-        显示答案 <kbd>空格</kbd>
-      </button>
+      <div v-if="!revealed" class="card-choices">
+        <button class="give-up-button" :disabled="loading" @click="giveUp">
+          想不起来 <kbd>1</kbd>
+        </button>
+        <button class="primary reveal-button" :disabled="loading" @click="revealed = true">
+          显示答案 <kbd>空格</kbd>
+        </button>
+      </div>
 
       <div v-else class="answer">
         <strong>{{ shortMeaning }}</strong>
@@ -385,7 +416,13 @@ onBeforeUnmount(() => {
         >
           {{ sentenceBusy ? '🔊 生成中…' : '🔊 朗读例句' }}
         </button>
-        <div class="ratings">
+        <div v-if="gaveUp" class="gave-up-panel">
+          <p class="muted">这一题记「忘记了」，{{ item.preview?.again || '10 分钟后' }}再来一次。</p>
+          <button class="primary" :disabled="loading" @click="emitRate('again', true)">
+            继续 <kbd>回车</kbd>
+          </button>
+        </div>
+        <div v-else class="ratings">
           <button
             v-for="(rating, position) in RATINGS"
             :key="rating"
@@ -482,8 +519,14 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <p v-if="mode === 'card'" class="keyboard-hint muted">
-      快捷键：<kbd>空格</kbd> 看答案 · <kbd>1</kbd>–<kbd>4</kbd> 评分 · <kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销
+    <p v-if="mode === 'card' && !revealed" class="keyboard-hint muted">
+      快捷键：<kbd>1</kbd> 想不起来 · <kbd>空格</kbd> 想起来了、看答案 · <kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销
+    </p>
+    <p v-else-if="mode === 'card' && gaveUp" class="keyboard-hint muted">
+      快捷键：<kbd>回车</kbd> 继续 · <kbd>U</kbd> 撤销
+    </p>
+    <p v-else-if="mode === 'card'" class="keyboard-hint muted">
+      快捷键：<kbd>1</kbd>–<kbd>4</kbd> 评分 · <kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销
     </p>
     <p v-else class="keyboard-hint muted">
       快捷键：<kbd>回车</kbd> 检查 · <kbd>Esc</kbd> 看答案 · <kbd>Alt</kbd>+<kbd>M</kbd> 切换模式 · <kbd>U</kbd> 撤销

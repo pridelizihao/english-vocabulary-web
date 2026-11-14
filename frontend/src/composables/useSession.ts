@@ -284,10 +284,14 @@ async function rate(payload: api.AnswerPayload) {
       }
     }
     completed.value += 1
-    // 看过答案的题即使答对也只记「忘记了」，得让用户知道为什么不是「记住了」。
-    notice.value = payload.revealed
-      ? `看过答案，按忘记处理 · ${result.next_review_label}`
-      : result.next_review_label
+    // 让人知道为什么不是「记住了」：填空是偷看，卡片是自己按了「想不起来」。
+    if (payload.mode === 'cloze' && payload.revealed) {
+      notice.value = `看过答案，按忘记处理 · ${result.next_review_label}`
+    } else if (payload.mode === 'card' && payload.revealed) {
+      notice.value = `没想起来 · ${result.next_review_label}`
+    } else {
+      notice.value = result.next_review_label
+    }
     if (stats.value) {
       const isNew = item.kind === 'new' && item.repeats === 0
       const learned = stats.value.learned_words + (isNew ? 1 : 0)

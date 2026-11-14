@@ -772,6 +772,44 @@ label {
   margin: 26px auto 0;
 }
 
+/* 卡片正面两条路：想不起来 / 显示答案。
+   以前只有「显示答案」，想诚实地说不会只能先看答案——那就不算诚实了。 */
+.card-choices {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  max-width: 460px;
+  margin: 26px auto 0;
+}
+
+.card-choices .reveal-button {
+  flex: 1 1 58%;
+  max-width: none;
+  margin: 0;
+}
+
+.give-up-button {
+  flex: 1 1 42%;
+  border-color: #f3c6d3;
+  background: #fffafb;
+  color: var(--danger);
+}
+
+.gave-up-panel {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  margin-top: 20px;
+}
+
+.gave-up-panel p {
+  margin: 0;
+}
+
+.gave-up-panel .primary {
+  min-width: 200px;
+}
+
 .answer {
   margin-top: 24px;
 }
@@ -2218,6 +2256,13 @@ label {
   }
 
   .card > .reveal-button,
+  .card > .card-choices,
+  .card > .card-choices {
+    align-self: stretch;
+    /* 自动外边距会吃掉 stretch，必须归零才能铺满 */
+    margin-inline: 0;
+  }
+
   .card > .answer,
   .card > .cloze-hint,
   .card > .cloze-word,
