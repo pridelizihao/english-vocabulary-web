@@ -64,6 +64,8 @@ export type Progress = {
 export type AnswerResult = Progress & {
   next_review_label: string
   preview: RatingPreview
+  /** 服务器最终采用的评分（填空模式由证据推导，可能和你点的不同）。 */
+  rating?: Rating
   practice?: boolean
   is_new?: boolean
   is_extra?: boolean
@@ -204,6 +206,11 @@ export type AnswerHistoryEntry = {
   interval_before: number
   interval_after: number
   is_practice: boolean
+  is_skip?: boolean
+  /** card = 自评；cloze = 由试错次数和是否看答案推导。 */
+  mode?: 'card' | 'cloze'
+  attempts?: number
+  revealed?: boolean
 }
 
 export type WordDetail = Word & {
@@ -398,16 +405,33 @@ export async function reviewToday(dictionaryId: number, order: StudyOrder) {
   return request<ReviewToday>(`/review/today?dictionary_id=${dictionaryId}&order=${order}`)
 }
 
+/** 一题是怎么作答的：卡片是自评，填空带客观证据（错几次、看没看答案）。 */
+export type AnswerPayload = {
+  mode: 'card' | 'cloze'
+  /** 卡片模式的自评；填空模式由服务器推导，传了也不作数。 */
+  rating?: Rating
+  /** 填空模式：这一题最终答对了没有。 */
+  correct?: boolean
+  /** 这一题试错了几次（含直接看答案那一次）。 */
+  attempts?: number
+  /** 是否看了答案才想起来的。 */
+  revealed?: boolean
+}
+
 export async function answer(
   wordId: number,
-  rating: Rating,
+  payload: AnswerPayload,
   options: { practice?: boolean; clientToken?: string; known?: boolean } = {},
 ) {
   await ensureCsrf()
   return request<AnswerResult>(`/study/${wordId}/answer`, {
     method: 'POST',
     body: JSON.stringify({
-      rating,
+      mode: payload.mode,
+      ...(payload.rating ? { rating: payload.rating } : {}),
+      ...(payload.correct === undefined ? {} : { correct: payload.correct }),
+      attempts: payload.attempts ?? 1,
+      revealed: Boolean(payload.revealed),
       practice: Boolean(options.practice),
       ...(options.clientToken ? { client_token: options.clientToken } : {}),
       ...(options.known ? { known: true } : {}),

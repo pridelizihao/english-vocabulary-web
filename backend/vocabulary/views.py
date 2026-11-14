@@ -47,6 +47,7 @@ from .services import (
     ImportFileError,
     SentenceAudioError,
     adaptive_new_limit,
+    derive_cloze_rating,
     describe_interval,
     import_words,
     parse_import_rows,
@@ -62,6 +63,8 @@ WORD_SEARCH_MAX_LENGTH = 50
 WORDS_PAGE_SIZE = 50
 WORDS_MAX_PAGE_SIZE = 200
 WRONG_WORDS_LIMIT = 50
+# 一题最多记几次试错（前端不会超过 3，留余量防脏数据）。
+MAX_ANSWER_ATTEMPTS = 20
 WORD_LIST_FILTERS = ('all', 'new', 'learning', 'mastered', 'due', 'wrong')
 
 
@@ -490,6 +493,9 @@ def _answer_history(user, word, limit=10):
             'interval_after': log.interval_after,
             'is_practice': log.is_practice,
             'is_skip': log.is_skip,
+            'mode': log.mode,
+            'attempts': log.attempts,
+            'revealed': log.revealed,
         }
         for log in logs
     ]
@@ -777,16 +783,28 @@ def answer_word(request, word_id):
     word = get_object_or_404(Word, id=word_id, dictionary__status='published')
     if not UserDictionary.objects.filter(user=request.user, dictionary=word.dictionary).exists():
         return fail('请先开始学习这本词典', status.HTTP_403_FORBIDDEN)
-    rating = request.data.get('rating')
-    if rating not in RATINGS:
-        return fail('rating 只能是 again / hard / good / easy')
     practice = bool(request.data.get('practice'))
     known = bool(request.data.get('known'))
+    mode = request.data.get('mode') or 'card'
+    if mode not in ('card', 'cloze'):
+        return fail('mode 只能是 card 或 cloze')
+    attempts = _clamp_int(request.data.get('attempts'), 1, MAX_ANSWER_ATTEMPTS, 1)
+    revealed = bool(request.data.get('revealed'))
+    correct = request.data.get('correct')
+    rating = request.data.get('rating')
+    if known:
+        # 「我已经会了」不看证据，直接归档。
+        rating = 'easy'
+    elif mode == 'cloze':
+        # 填空有客观证据：评分由服务器按「错了几次 / 有没有看答案」推导，
+        # 客户端传什么 rating 都不作数（否则偷看之后重试就能洗白）。
+        if correct is None:
+            return fail('填空模式需要提交 correct')
+        rating = derive_cloze_rating(attempts, revealed, bool(correct))
+    elif rating not in RATINGS:
+        return fail('rating 只能是 again / hard / good / easy')
     if known and practice:
         return fail('练习模式不能标记为已掌握')
-    if known:
-        # Marking a word as known always records an "easy" answer.
-        rating = 'easy'
     token = (request.data.get('client_token') or '').strip()[:64]
     today = timezone.localdate()
 
@@ -808,6 +826,7 @@ def answer_word(request, word_id):
                     user=request.user, word=word, dictionary=word.dictionary, rating=rating,
                     is_practice=True, interval_before=progress.interval_days,
                     interval_after=progress.interval_days, client_token=token,
+                    mode=mode, attempts=attempts, revealed=revealed,
                 )
                 payload = ProgressSerializer(progress).data
                 payload['practice'] = True
@@ -844,6 +863,7 @@ def answer_word(request, word_id):
                 user=request.user, word=word, dictionary=word.dictionary, rating=rating,
                 is_new=created, is_extra=is_extra, is_skip=known, interval_before=interval_before,
                 interval_after=progress.interval_days, state_before=snapshot, client_token=token,
+                mode=mode, attempts=attempts, revealed=revealed,
             )
     except IntegrityError:
         # Two concurrent retries of the same token: the loser replays the winner.
@@ -853,6 +873,7 @@ def answer_word(request, word_id):
         return Response(_duplicate_answer_payload(existing))
 
     payload = ProgressSerializer(progress).data
+    payload['rating'] = rating
     payload['next_review_label'] = '已移出复习' if known else describe_interval(progress.interval_days, rating)
     payload['preview'] = preview_intervals(progress)
     payload['is_new'] = created
@@ -1216,9 +1237,10 @@ def profile_insights(request):
         })
 
     # --- 评分校准 -----------------------------------------------------------
-    # 把每个词的相邻两次作答配成 (自评, 下次实际)。下次答错说明那次自评偏乐观。
+    # 只统计卡片模式（真正的自评）。填空的评分是服务器按证据推出来的，
+    # 混进来会让「自评 vs 下次实际表现」这个标题不成立。
     rows = list(
-        window.order_by('word_id', 'created_at', 'id')
+        window.filter(mode='card').order_by('word_id', 'created_at', 'id')
         .values_list('word_id', 'rating', 'created_at', 'interval_before')
     )
     calib = {rating: {'samples': 0, 'forgotten': 0} for rating in RATINGS}

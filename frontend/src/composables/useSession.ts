@@ -246,7 +246,7 @@ async function startStudy(dictionaryId: number, options: { extra?: number } = {}
   }
 }
 
-async function rate(rating: api.Rating) {
+async function rate(payload: api.AnswerPayload) {
   const item = currentItem.value
   if (!item || loading.value) return
   const position = index.value
@@ -259,7 +259,7 @@ async function rate(rating: api.Rating) {
   clearError()
   try {
     if (item.kind === 'practice') {
-      await api.answer(item.word.id, rating, { practice: true, clientToken: token })
+      await api.answer(item.word.id, payload, { practice: true, clientToken: token })
       answerToken.value = ''
       completed.value += 1
       notice.value = '已记录（练习不改间隔）'
@@ -271,18 +271,23 @@ async function rate(rating: api.Rating) {
       }
       return
     }
-    const result = await api.answer(item.word.id, rating, { clientToken: token })
+    const result = await api.answer(item.word.id, payload, { clientToken: token })
     answerToken.value = ''
+    // 填空的评分由服务器按证据推导，客户端点的那个可能被下调（看答案 → 忘记了）。
+    const effective: api.Rating = result.rating ?? payload.rating ?? 'good'
     if (result.answer_log_id) {
       lastAnswer.value = {
         logId: result.answer_log_id,
         index: position,
         queueLength: lengthBefore,
-        rating,
+        rating: effective,
       }
     }
     completed.value += 1
-    notice.value = result.next_review_label
+    // 看过答案的题即使答对也只记「忘记了」，得让用户知道为什么不是「记住了」。
+    notice.value = payload.revealed
+      ? `看过答案，按忘记处理 · ${result.next_review_label}`
+      : result.next_review_label
     if (stats.value) {
       const isNew = item.kind === 'new' && item.repeats === 0
       const learned = stats.value.learned_words + (isNew ? 1 : 0)
@@ -297,7 +302,7 @@ async function rate(rating: api.Rating) {
           : 0,
       }
     }
-    if (rating === 'again') queue.value = requeueAgain(queue.value, item)
+    if (effective === 'again') queue.value = requeueAgain(queue.value, item)
     if (position + 1 >= queue.value.length) {
       stats.value = await api.statistics(item.word.dictionary)
       navigate(`/done/${item.word.dictionary}`)
@@ -454,7 +459,11 @@ async function markKnown() {
   loading.value = true
   clearError()
   try {
-    const result = await api.answer(item.word.id, 'easy', { clientToken: token, known: true })
+    const result = await api.answer(
+      item.word.id,
+      { mode: mode.value, rating: 'easy' },
+      { clientToken: token, known: true },
+    )
     answerToken.value = ''
     if (result.answer_log_id) {
       lastAnswer.value = {

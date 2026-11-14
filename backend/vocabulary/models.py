@@ -199,6 +199,13 @@ class AnswerLog(models.Model):
     is_practice = models.BooleanField(default=False)
     # "I already know this word": jumps straight to mastered (365 days).
     is_skip = models.BooleanField(default=False)
+    # 这一题是怎么作答的：卡片是自评，填空有客观证据（试错次数、有没有看答案）。
+    MODE_CHOICES = [('card', '卡片'), ('cloze', '填空')]
+    mode = models.CharField(max_length=10, choices=MODE_CHOICES, default='card')
+    # 填错了几次（含直接看答案那一题）；卡片模式恒为 1。
+    attempts = models.PositiveSmallIntegerField(default=1)
+    # 是否看了答案才想起来的：填空模式的客观证据，用来防止「偷看后重试」洗白。
+    revealed = models.BooleanField(default=False)
     interval_before = models.PositiveIntegerField(default=0)
     interval_after = models.PositiveIntegerField(default=0)
     # Snapshot of the progress row *before* this answer, so the answer can be

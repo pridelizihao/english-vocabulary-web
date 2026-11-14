@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import type { Rating } from '../api'
+import type { AnswerPayload, Rating } from '../api'
 import { useSpeech } from '../composables/useSpeech'
 import { sentenceAudioUrl } from '../lib/speech'
 import {
@@ -34,7 +34,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (event: 'rate', rating: Rating): void
+  (event: 'rate', payload: AnswerPayload): void
   (event: 'back'): void
   (event: 'undo'): void
   (event: 'known'): void
@@ -45,7 +45,10 @@ const revealed = ref(false)
 const answer = ref<string[]>([])
 const result = ref<'correct' | 'wrong' | null>(null)
 const shaking = ref(false)
+// 这一题累计错了几次：「再试一次」不清零，否则偷看之后重试就能洗白。
 const attempts = ref(0)
+// 是否看过答案：一旦看过就为真，这一题最高只能记「忘记了」。
+const peeked = ref(false)
 const {
   speak: speakWord,
   stop: stopSpeech,
@@ -87,6 +90,7 @@ function reset() {
   result.value = null
   shaking.value = false
   attempts.value = 0
+  peeked.value = false
   speechMessage.value = ''
   hintVisible.value = true
   fullMeaningVisible.value = false
@@ -177,7 +181,8 @@ function submitCloze() {
 }
 
 function revealAnswer() {
-  attempts.value = Math.max(attempts.value, 2)
+  attempts.value = Math.max(attempts.value, 1)
+  peeked.value = true
   answer.value = Array.from(word.value.spelling)
   result.value = 'wrong'
   dismissKeyboard()
@@ -189,7 +194,7 @@ function editAgain() {
 }
 
 function restartAttempt() {
-  attempts.value = 0
+  // 试错次数和「看过答案」都不清零：这一题已经不算想起来了。
   result.value = null
   answer.value = buildClozeAnswer(word.value.spelling)
   focusFirstEmpty()
@@ -205,7 +210,7 @@ function primaryAction() {
     return
   }
   if (result.value === 'correct') {
-    emitRate('good')
+    submitEvidence(true)
     return
   }
   if (result.value === 'wrong') {
@@ -215,9 +220,21 @@ function primaryAction() {
   submitCloze()
 }
 
+/** 卡片模式：自评。 */
 function emitRate(rating: Rating) {
   if (props.loading) return
-  emit('rate', rating)
+  emit('rate', { mode: 'card', rating })
+}
+
+/** 填空模式：只交证据，评多少由服务器按「错几次 / 看没看答案」决定。 */
+function submitEvidence(correct: boolean) {
+  if (props.loading) return
+  emit('rate', {
+    mode: 'cloze',
+    correct,
+    attempts: Math.max(attempts.value, 1),
+    revealed: peeked.value,
+  })
 }
 
 // 朗读顺序：词典自带音频 → 系统英文语音 → 在线发音（有道），见 useSpeech。
@@ -426,22 +443,23 @@ onBeforeUnmount(() => {
       <p v-if="noBlanks" class="muted">这个词太短，没有需要填的空，直接继续即可。</p>
 
       <div v-if="!result" class="cloze-actions">
-        <button class="primary" :disabled="(!complete && !noBlanks) || loading" @click="noBlanks ? emitRate('good') : submitCloze()">
+        <button class="primary" :disabled="(!complete && !noBlanks) || loading" @click="noBlanks ? submitEvidence(true) : submitCloze()">
           {{ noBlanks ? '继续' : '检查答案' }} <kbd>回车</kbd>
         </button>
         <button v-if="!noBlanks" class="link-button" @click="revealAnswer">不会，看答案 <kbd>Esc</kbd></button>
       </div>
 
       <div v-else-if="result === 'correct'" class="cloze-result">
-        <strong class="correct">回答正确</strong>
+        <strong class="correct">{{ peeked ? '填对了，但看过答案' : '回答正确' }}</strong>
         <p v-if="item.kind === 'practice'">练习已记录，不改变复习间隔</p>
+        <p v-else-if="peeked">这一题按「忘记」处理，{{ item.preview?.again || '10 分钟后' }}再来一次</p>
         <p v-else>下次复习：{{ item.preview?.good || '按计划' }}</p>
-        <button class="primary" :disabled="loading" @click="emitRate('good')">继续 <kbd>回车</kbd></button>
+        <button class="primary" :disabled="loading" @click="submitEvidence(true)">继续 <kbd>回车</kbd></button>
       </div>
 
       <div v-else-if="result === 'retry'" class="cloze-result">
         <strong class="wrong">还不对</strong>
-        <p>还有一次机会，再想想；实在想不起来就按 Esc 看答案。</p>
+        <p>再想想；实在想不起来就按 Esc 看答案——看了答案这一题就算没想起来。</p>
         <div class="cloze-actions">
           <button class="primary" :disabled="loading" @click="editAgain">继续填 <kbd>回车</kbd></button>
           <button :disabled="loading" @click="revealAnswer">看答案 <kbd>Esc</kbd></button>
@@ -453,7 +471,7 @@ onBeforeUnmount(() => {
         <p class="cloze-answer">{{ word.spelling }}</p>
         <div class="cloze-actions">
           <button class="primary" :disabled="loading" @click="restartAttempt">再试一次</button>
-          <button :disabled="loading" @click="emitRate('hard')">记为模糊</button>
+          <button :disabled="loading" @click="submitEvidence(false)">记不住，过</button>
         </div>
       </div>
     </section>

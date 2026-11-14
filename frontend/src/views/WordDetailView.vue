@@ -124,6 +124,10 @@ watch(() => props.wordId, load)
         <ul v-if="detail.history.length" class="history-list">
           <li v-for="entry in detail.history" :key="entry.id">
             <span class="history-rating" :class="entry.rating">{{ entry.rating_label }}</span>
+            <span v-if="entry.mode === 'cloze'" class="history-evidence">
+              {{ entry.revealed ? '看答案' : '填空' }}<template v-if="(entry.attempts ?? 1) > 1">· 错 {{ entry.attempts }} 次</template>
+            </span>
+            <span v-else class="history-evidence">自评</span>
             <span class="muted">{{ formatMoment(entry.created_at) }}</span>
             <span class="history-interval">
               {{ entry.is_practice ? '仅练习' : `${entry.interval_before} → ${entry.interval_after} 天` }}

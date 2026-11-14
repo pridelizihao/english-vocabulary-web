@@ -1611,6 +1611,16 @@ label {
   font-weight: 600;
 }
 
+/* 这一题的证据来源：自评，还是填空的「看答案 / 错 2 次」 */
+.history-evidence {
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .history-rating.again {
   background: #fde8ef;
   color: var(--danger);

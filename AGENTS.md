@@ -21,7 +21,7 @@ backend/                       Django 项目
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
     management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples / annotate_cefr
-    tests.py                   后端用例（当前 91 个）
+    tests.py                   后端用例（当前 100 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
@@ -92,7 +92,13 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 - **答题流水**：每次作答写一条 `AnswerLog`（新词/额外/练习/间隔前后），个人面板和后续统计都基于它。
 - **撤销**：只能撤销**最近一条未撤销**的作答，且必须在 10 分钟内；`AnswerLog.state_before` 保存作答前的进度快照，撤销时按快照恢复（新词直接删进度行）；撤销后清空 `client_token`，允许用同一个请求标识重新作答。
 - **幂等**：作答可带 `client_token`（前端每次作答生成），同一用户同一 token 只落一条流水，重复请求返回 `duplicate: true` 且不再推进间隔。
-- **统计口径**：`statistics.today_completed` = 今日**非练习**答题条数；所有统计（个人面板、额外新词用量、答题历史）都必须排除 `undone_at` 非空的记录。
+- **评分来源**：卡片模式是**用户自评**（`mode='card'`，只能靠主观判断）；填空模式是**客观证据推导**——客户端只提交 `correct / attempts / revealed`，服务器用 `services.derive_cloze_rating()` 算评分，传什么 `rating` 都不作数：
+  - 一次就对、没看答案 → `good`
+  - 错一次后对 → `hard`
+  - 看了答案，或错两次以上 → `again`（间隔归零、十分钟后再来）
+  「看答案」等于没想起来，**之后重试答对也不能洗白**（`revealed` 一旦为真就锁死为 `again`）。这样 `streak` 只认真正想起来的，可用来判断是否归档。
+- **答题证据**：`AnswerLog.mode / attempts / revealed` 记录每题的作答方式与证据；`attempts` 是累计试错次数，「再试一次」**不清零**（否则偷看后重试就能刷成 `good`），词详情的作答历史会显示「自评 / 填空 / 看答案 · 错 N 次」。
+- **评分校准**：只统计 `mode='card'` 的日志——填空的评分是服务器推导的，混进去「自评 vs 实际」就不成立。
 - **错词**：`wrong_count > 0` 即错词；错词练习走 `practice` 通道，只记录不改间隔。
 - **新词顺序**：默认 `core`：CEFR 等级 B1 → B2 → C1 → 未收录 → A2 → A1，`is_proper`（月份、人名、缩写）永远最后；同档内按 `(id * 1103515245 + 每天种子) mod 2^31-1` 打乱（同一天刷新顺序不变，隔天变），避免读成字母表；另外支持 `alpha` / `random`。CEFR 来自 `data/sources/Oxford.json`，CSV 的 `cefr` 列或 `annotate_cefr` 命令写入。
 - **标记已会**：作答时带 `known: true` 直接把词设为**归档**（`status='retired'`）、间隔 365 天，日志记 `is_skip=True`（rating 固定 `easy`）；撤销同样按快照恢复。
@@ -151,7 +157,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 | GET | `/api/review/today?dictionary_id=` | 到期复习 |
 | GET | `/api/review/early?dictionary_id=&order=weak\|due\|random&limit=` | 提前复习（练习，不改 SRS） |
 | GET | `/api/review/wrong?dictionary_id=&limit=&order=wrong\|recent` | 错词列表（练习用） |
-| POST | `/api/study/{word_id}/answer` | 提交 `{rating, practice?, client_token?, known?}`；practice 只记录，known 直接归档（365 天） |
+| POST | `/api/study/{word_id}/answer` | 卡片：`{mode:'card', rating}`；填空：`{mode:'cloze', correct, attempts, revealed}`（评分由服务器推导，传 rating 无效）；`practice` 只记录，`known` 直接归档 |
 | POST | `/api/words/{word_id}/relearn` | 把已归档的词放回复习队列（间隔清零、马上到期）；非归档词 400 |
 | POST | `/api/answers/{log_id}/undo` | 撤销最近一次作答（10 分钟内） |
 | GET | `/api/profile/summary?days=371` | 个人学习面板：每日/连续天数/按词典（days 支持 7–371） |
@@ -190,7 +196,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 91 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 100 个）。
 - 改填空/SRS/热力图/朗读/词表/图表/浮层定位 → 改 `frontend/tests/*.test.mjs`（当前 51 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。

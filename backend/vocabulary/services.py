@@ -190,6 +190,21 @@ def status_for(progress):
     return 'learning'
 
 
+def derive_cloze_rating(attempts, revealed, correct):
+    """填空模式的评分由客观证据决定，而不是让用户自己点。
+
+    看答案就等于没想起来：即使之后「再试一次」答对了，也不能洗白成
+    记住了——这一题记 again，间隔归零、十分钟后再来。
+    """
+    if not correct or revealed:
+        return 'again'
+    if attempts <= 1:
+        return 'good'
+    if attempts == 2:
+        return 'hard'
+    return 'again'
+
+
 def adaptive_new_limit(due_reviews, base_limit=NEW_WORD_LIMIT):
     """到期复习积压越多，当天给的新词越少。
 

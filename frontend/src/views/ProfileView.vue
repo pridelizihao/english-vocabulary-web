@@ -441,7 +441,7 @@ function review(item: ProfileDictionary) {
       <section class="panel profile-panel">
         <header class="profile-panel-head">
           <strong>评分校准</strong>
-          <span class="muted">自评 vs 下次实际表现</span>
+          <span class="muted">只看卡片模式的自评 vs 下次实际表现</span>
         </header>
 
         <template v-if="calibrationSamples">

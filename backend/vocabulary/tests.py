@@ -28,6 +28,7 @@ from .services import (
     RETIRE_STREAK,
     SentenceAudioError,
     adaptive_new_limit,
+    derive_cloze_rating,
     schedule,
     status_for,
 )
@@ -983,6 +984,99 @@ class RetiredWordTests(ApiTestCase):
     def test_relearn_needs_login(self):
         response = self.client.post(f'/api/words/{self.words[0].id}/relearn')
         self.assertEqual(response.status_code, 401)
+
+
+class ClozeEvidenceTests(ApiTestCase):
+    """填空模式：评分由客观证据决定，客户端说「我记住了」不作数。"""
+
+    def cloze(self, **payload):
+        body = {'mode': 'cloze'}
+        body.update(payload)
+        return self.client.post(f'/api/study/{self.words[0].id}/answer', body, format='json')
+
+    def test_rating_is_derived_from_evidence(self):
+        self.assertEqual(derive_cloze_rating(1, False, True), 'good')
+        self.assertEqual(derive_cloze_rating(2, False, True), 'hard')
+        self.assertEqual(derive_cloze_rating(3, False, True), 'again')
+        self.assertEqual(derive_cloze_rating(1, False, False), 'again')
+        # 看过答案：不管之后答得多干净，都只算没想起来
+        self.assertEqual(derive_cloze_rating(1, True, True), 'again')
+        self.assertEqual(derive_cloze_rating(2, True, True), 'again')
+
+    def test_first_try_correct_counts_as_good(self):
+        self.login()
+        self.enroll()
+        response = self.cloze(correct=True, attempts=1, revealed=False)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['rating'], 'good')
+        self.assertEqual(response.data['interval_days'], 1)
+
+    def test_second_try_correct_counts_as_hard(self):
+        self.login()
+        self.enroll()
+        response = self.cloze(correct=True, attempts=2, revealed=False)
+        self.assertEqual(response.data['rating'], 'hard')
+        self.assertEqual(response.data['interval_days'], 1)
+
+    def test_peeking_forces_again_even_when_client_claims_easy(self):
+        self.login()
+        self.enroll()
+        # 客户端可以随便传 rating，服务器只认 correct / attempts / revealed
+        response = self.cloze(correct=True, attempts=1, revealed=True, rating='easy')
+        self.assertEqual(response.data['rating'], 'again')
+        self.assertEqual(response.data['interval_days'], 0)
+        self.assertEqual(response.data['next_review_label'], '10 分钟后')
+
+    def test_wrong_answer_is_again_and_counts_as_mistake(self):
+        self.login()
+        self.enroll()
+        response = self.cloze(correct=False, attempts=2, revealed=True)
+        self.assertEqual(response.data['rating'], 'again')
+        progress = UserWordProgress.objects.get(user=self.user, word=self.words[0])
+        self.assertEqual(progress.wrong_count, 1)
+        self.assertEqual(progress.streak, 0)
+
+    def test_evidence_is_stored_on_the_log(self):
+        self.login()
+        self.enroll()
+        self.cloze(correct=True, attempts=2, revealed=False)
+        log = AnswerLog.objects.get(user=self.user, word=self.words[0])
+        self.assertEqual(log.mode, 'cloze')
+        self.assertEqual(log.attempts, 2)
+        self.assertFalse(log.revealed)
+
+        detail = self.client.get(f'/api/words/{self.words[0].id}').data
+        entry = detail['history'][0]
+        self.assertEqual(entry['mode'], 'cloze')
+        self.assertEqual(entry['attempts'], 2)
+        self.assertFalse(entry['revealed'])
+
+    def test_peeking_never_advances_streak(self):
+        """看答案不能把 streak 刷到归档。"""
+        self.login()
+        self.enroll()
+        for _ in range(10):
+            self.cloze(correct=True, attempts=1, revealed=True)
+        progress = UserWordProgress.objects.get(user=self.user, word=self.words[0])
+        self.assertEqual(progress.streak, 0)
+        self.assertNotEqual(progress.status, 'retired')
+
+    def test_card_mode_still_requires_a_rating(self):
+        self.login()
+        self.enroll()
+        response = self.client.post(
+            f'/api/study/{self.words[0].id}/answer',
+            {'mode': 'card'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_cloze_mode_requires_correct_flag(self):
+        self.login()
+        self.enroll()
+        response = self.cloze()
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('correct', response.data['detail'])
 
 
 class KnownWordTests(ApiTestCase):
