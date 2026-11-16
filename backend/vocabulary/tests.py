@@ -1185,6 +1185,59 @@ class KnownWordTests(ApiTestCase):
         self.assertEqual(response.data['detail'], '练习模式不能标记为已掌握')
 
 
+class SeedDemoTests(ApiTestCase):
+    """演示数据生成器：只碰目标账号，产出的数据要能驱动面板指标。"""
+
+    def run_seed(self, **options):
+        call_command('seed_demo', stdout=io.StringIO(), **options)
+
+    def test_creates_demo_user_with_history(self):
+        for index in range(6):
+            Word.objects.create(
+                dictionary=self.dictionary, spelling=f'w{index}', meaning='词',
+                example=f'This is w{index}.', example_translation='例句',
+            )
+        self.run_seed(username='demo', password='Demo12345678', words=6, days=5, seed=7)
+
+        user = get_user_model().objects.get(username='demo')
+        self.assertTrue(user.check_password('Demo12345678'))
+        self.assertTrue(UserWordProgress.objects.filter(user=user).exists())
+        self.assertTrue(AnswerLog.objects.filter(user=user).exists())
+        self.assertTrue(UserDictionary.objects.filter(user=user, dictionary=self.dictionary).exists())
+
+    def test_does_not_touch_other_users(self):
+        Word.objects.create(
+            dictionary=self.dictionary, spelling='keep', meaning='保持',
+            example='Keep it.', example_translation='留着',
+        )
+        UserWordProgress.objects.create(user=self.user, word=self.dictionary.words.first(), interval_days=9)
+        before = AnswerLog.objects.count()
+
+        self.run_seed(username='demo', words=1, days=2, seed=11)
+
+        self.assertTrue(UserWordProgress.objects.filter(user=self.user, interval_days=9).exists())
+        self.assertEqual(AnswerLog.objects.filter(user=self.user).count(), before)
+
+    def test_reset_rebuilds_the_account(self):
+        Word.objects.create(
+            dictionary=self.dictionary, spelling='foo', meaning='词',
+            example='Foo bar.', example_translation='例句',
+        )
+        self.run_seed(username='demo2', words=1, days=2, seed=3)
+        first = get_user_model().objects.get(username='demo2').id
+        self.run_seed(username='demo2', words=1, days=2, seed=3, reset=True)
+        second = get_user_model().objects.get(username='demo2').id
+        self.assertNotEqual(first, second)
+
+    def test_requires_words_with_examples(self):
+        with self.assertRaises(Exception):
+            self.run_seed(username='demo3', words=5)
+
+    def test_rejects_unknown_dictionary(self):
+        with self.assertRaises(Exception):
+            self.run_seed(dictionary='不存在的词典')
+
+
 class AnnotateCefrTests(ApiTestCase):
     def test_command_backfills_levels_and_proper_flag(self):
         Word.objects.create(dictionary=self.dictionary, spelling='access', meaning='x')

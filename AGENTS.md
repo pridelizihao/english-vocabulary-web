@@ -20,8 +20,8 @@ backend/                       Django 项目
     serializers.py             输出结构，含每个词的 preview 间隔文案
     urls.py                    路由（显式路由必须写在 router 之前）
     admin.py                   已配 list_display / search_fields，别再退回裸 register
-    management/commands/       seed_dictionaries / seed_wordlists / import_dictionary / enrich_examples / annotate_cefr
-    tests.py                   后端用例（当前 105 个）
+    management/commands/       seed_dictionaries / seed_wordlists / seed_demo / import_dictionary / enrich_examples / annotate_cefr
+    tests.py                   后端用例（当前 110 个）
     migrations/0002_*.py       注意：含大小写去重逻辑，不要随手删
 frontend/
   src/api.ts                   唯一请求入口：ApiError、CSRF、超时、中文错误
@@ -42,7 +42,7 @@ data/
   samples/words.csv            CSV 导入模板
   scripts/build_wordlists.py   从 sources + examples 生成 imports
 deploy/                        systemd unit + nginx 站点配置（原生部署用）
-docs/                          设计说明、审查报告、部署说明（deploy.md）
+docs/                          设计说明、审查报告、部署说明（deploy.md）、界面截图（screenshots/）
 ```
 
 ## 3. 环境
@@ -71,6 +71,11 @@ npm run dev
 ```bash
 # 后端测试（提交前必须全绿）
 cd backend && ../.venv/Scripts/python.exe manage.py test
+
+# 演示数据（本地体验 / 重拍 README 截图用，只写 demo 账号）
+cd backend
+../.venv/Scripts/python.exe manage.py seed_demo           # demo / Demo12345678
+../.venv/Scripts/python.exe manage.py seed_demo --reset   # 连账号一起重建
 
 # 前端
 cd frontend
@@ -199,7 +204,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 
 ## 8. 测试与提交
 
-- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 105 个）。
+- 改后端业务规则 → 在 `backend/vocabulary/tests.py` 补用例（当前 110 个）。
 - 改填空/SRS/热力图/朗读/词表/图表/浮层定位 → 改 `frontend/tests/*.test.mjs`（当前 51 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
