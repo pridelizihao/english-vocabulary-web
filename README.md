@@ -9,9 +9,10 @@
 <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.6-3178c6?logo=typescript&logoColor=white">
 <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776ab?logo=python&logoColor=white">
 <img alt="tests" src="https://img.shields.io/badge/tests-110%20backend%20%2F%2051%20frontend-1a7f5a">
+<img alt="License" src="https://img.shields.io/badge/license-MIT-3da639">
 </p>
 
-**在线体验**：<http://47.117.171.160/> （注册即用，手机浏览器可直接打开）
+**在线体验**：<http://47.117.171.160/> （注册即用，手机浏览器可直接打开）　·　**源码**：<https://github.com/pridelizihao/english-vocabulary-web>
 
 ![学习界面](docs/screenshots/03-card-answer.png)
 
@@ -241,6 +242,12 @@ npm run build                                      # 产物在 dist/，部署机
 bash /opt/english-vocabulary/deploy/update.sh
 ```
 
+`update.sh` 从服务器上的裸仓库拉取，所以本仓库配了两个远端：`github` 是公开镜像，`origin` 是那台服务器（部署源）。两边一起推：
+
+```bash
+bash deploy/publish.sh    # 先推 github，再推 origin
+```
+
 也可以用 Docker：
 
 ```bash
@@ -341,6 +348,14 @@ AGENTS.md                    给后续开发/AI 代理的约定与踩坑清单
 - [ ] 按个人保持率回灌调度参数（现在的 ease 还是通用规则，没用上你自己的曲线）
 - [ ] 复习上限可调、逾期词单独入口
 - [ ] 词表导出与分享
+
+---
+
+## 许可
+
+代码以 [MIT](LICENSE) 发布——可以拿去做自己的背单词工具、改商用都行，保留版权声明即可。
+
+`data/` 里的词表不属于这个 MIT 授权：`data/sources/` 的 CET 词表与中文释义来自 [imfiiish/wordlists](https://github.com/imfiiish/wordlists)（释义源自 ECDICT），CEFR 等级来自 Oxford 3000/5000 派生数据，`data/examples.json` 的例句是本项目自己写的。**再分发或商用前请自行确认上游许可**，细节见 [`data/sources/README.md`](data/sources/README.md)。
 
 ---
 

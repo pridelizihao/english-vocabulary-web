@@ -41,7 +41,7 @@ data/
   examples.json                例句 + 中文翻译（enrich_examples 的数据源）
   samples/words.csv            CSV 导入模板
   scripts/build_wordlists.py   从 sources + examples 生成 imports
-deploy/                        systemd unit + nginx 站点配置（原生部署用）
+deploy/                        systemd unit + nginx 站点配置（原生部署用）+ update.sh / publish.sh
 docs/                          设计说明、审查报告、部署说明（deploy.md）、界面截图（screenshots/）
 ```
 
@@ -208,6 +208,21 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 - 改填空/SRS/热力图/朗读/词表/图表/浮层定位 → 改 `frontend/tests/*.test.mjs`（当前 51 个）。
 - 提交前：`manage.py test` + `npm run typecheck` + `npm run test` + `npm run build`。
 - 提交信息：`feat|fix|chore|test|docs(scope): 中文摘要`。
+
+## 8.1 远端与发布
+
+两个远端，别混：
+
+| 远端 | 地址 | 作用 |
+| --- | --- | --- |
+| `origin` | `ssh://root@47.117.171.160/srv/git/english-vocabulary.git` | 服务器上的裸仓库，`deploy/update.sh` 从这里拉代码，**部署源** |
+| `github` | `git@github.com:pridelizihao/english-vocabulary-web.git` | GitHub 公开镜像（MIT），给人看的 |
+
+- 一次推两边：`bash deploy/publish.sh`（默认 `main`）。也可以手动 `git push github HEAD:main && git push origin HEAD:main`。
+- **别让服务器从 GitHub 拉**：国内到 GitHub 不稳，部署链路要保持「本地 → 服务器」这条能走通的。
+- GitHub 的 SSH 身份是 `pridelizihao`（`~/.ssh/config` 的 `Host github.com` → `ssh.github.com:443`，key `id_rsa`）；本仓库 git 提交身份是 `pridelzh <pridelzh@foxmail.com>`，两者不同是正常的。
+- 公开仓库意味着 README 里的一切都会公开：现在只有生产 IP（`47.117.171.160`）这一处，加内容前想一下能不能公开。
+- `.env`、`db.sqlite3`、`venv/`、`backend/audio-cache/` 都在 `.gitignore` 里，**不要为了省事 `git add -f`**。
 
 ## 9. 已知限制 / 待办
 
