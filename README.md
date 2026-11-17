@@ -351,6 +351,16 @@ AGENTS.md                    给后续开发/AI 代理的约定与踩坑清单
 
 ---
 
+## 致谢
+
+<img src="docs/assets/deepseek-whale.svg" width="30" align="left" hspace="12" alt="DeepSeek">
+
+主要实现由 [@pridelizihao](https://github.com/pridelizihao) 与 **DeepSeek**（AI 编程助手）结对完成：调度与评分逻辑、前端交互、测试用例、这份 README 和截图都有它参与，具体分工见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。
+
+<br clear="left">
+
+---
+
 ## 许可
 
 代码以 [MIT](LICENSE) 发布——可以拿去做自己的背单词工具、改商用都行，保留版权声明即可。

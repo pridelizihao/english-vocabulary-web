@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="DeepSeek">
+  <title>DeepSeek</title>
+  <!-- 自己画的鲸鱼小圆标，不复制任何官方素材或同人图 -->
+  <path d="M43 36 51 28.5 48.5 37.5 51 46.5 43 39Z" fill="#4D6BFE"/>
+  <ellipse cx="28" cy="37.5" rx="18" ry="11" fill="#4D6BFE"/>
+  <path d="M15 41.5c5.6 4 14.8 4.8 23.6 2" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" opacity=".9"/>
+  <circle cx="19.5" cy="32.5" r="2.4" fill="#FFFFFF"/>
+</svg>
