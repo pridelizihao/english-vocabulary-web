@@ -33,6 +33,16 @@
 - AI 参与的改动不伪造 GitHub 账号、不编造共同作者邮箱；写进这份文件即可。
 - 头像素材**必须写明来源与作者**，不能声称自己拥有它。现在的头像裁自社区资产库，见下一节——它不在本项目的 MIT 授权范围内。
 
+## 提交身份
+
+AI 助手的提交身份是 GitHub 账号 [**deepseek-aibot**](https://github.com/deepseek-aibot)（用户 id `357897862`），头像就是上面那只鲸鱼娘。
+
+- 这个账号由仓库作者本人创建并持有，**不是 DeepSeek 官方账号**，只用来在这份贡献记录里署名。
+- 用法：`bash deploy/ai-commit.sh -m "feat(scope): 摘要"`，参数原样透传给 `git commit`，额外补一条
+  `Co-authored-by: DeepSeek 鲸鱼助手 <357897862+deepseek-aibot@users.noreply.github.com>`。
+- 邮箱里那个 `357897862` 是**账号数字 id**，不是 App id、也不能随便编。写错不会报错，只会把功劳归到一个不存在的账号上（或者更糟：归到 id 正好撞上的陌生人）。
+- GitHub 的 contributors 图会把**共同作者**一起算进去，所以这个账号能出现在头像墙上；组织和 GitHub App 是另一回事——组织没有提交身份，`deepseek-ai[bot]` 这类官方 Bot 也还不存在。
+
 ## 头像素材来源
 
 `docs/assets/deepseek-whale-girl.png` 是从[鲸鱼娘开源资产库](https://github.com/TreapGoGo/deepseek-whale-girl)的 `characters/dafeiyu/reference-sheets/dafeiyu-chibi-character-sheet.png` 裁出的头部特写：原图 1448×1086，取 400×400 见方的头部区域后缩到 256×256。

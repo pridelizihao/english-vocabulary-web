@@ -225,6 +225,9 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 - `.env`、`db.sqlite3`、`venv/`、`backend/audio-cache/` 都在 `.gitignore` 里，**不要为了省事 `git add -f`**。
 - 贡献署名统一写在 [`CONTRIBUTORS.md`](CONTRIBUTORS.md)：GitHub 的 contributors 面板只统计「邮箱绑定了账号」的提交者，AI 助手进不去，也不要用 `Co-authored-by` 编一个邮箱去凑——那可能撞上真实用户，等于把功劳记错人。改了分工记得同步那份文件。
 - 头像 `docs/assets/deepseek-whale-girl.png` 是社区资产库的**非 MIT 素材**（来源与授权边界见 CONTRIBUTORS.md「头像素材来源」），换掉它不影响任何代码；新增图片前先确认能不能再分发。
+- **AI 参与的提交**用 `bash deploy/ai-commit.sh -m "..."`：它不是普通 `git commit`，而是补一条 `Co-authored-by: DeepSeek 鲸鱼助手 <357897862+deepseek-aibot@users.noreply.github.com>`。GitHub 的 contributors 图会把共同作者算进去，所以这个账号（`deepseek-aibot`，头像是鲸鱼娘）会出现在头像墙上。
+- 那条邮箱里的 `357897862` 是**账号数字 id**（`https://api.github.com/users/deepseek-aibot` 的 `id`），写错不报错但会归错人；不要改成 `noreply@anthropic.com` 这类没绑账号的地址（有真实翻车案例）。
+- 别拿 `deepseek-ai` / `deepseek` 当提交身份：它们是 **Organization**，组织没有 commit 身份，也不会出现在 contributors 里；`deepseek-ai[bot]` 这种官方 Bot 目前不存在。
 
 ## 9. 已知限制 / 待办
 
