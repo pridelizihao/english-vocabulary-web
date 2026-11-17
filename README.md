@@ -353,9 +353,9 @@ AGENTS.md                    给后续开发/AI 代理的约定与踩坑清单
 
 ## 致谢
 
-<img src="docs/assets/deepseek-whale.svg" width="30" align="left" hspace="12" alt="DeepSeek">
+<img src="docs/assets/deepseek-whale-girl.png" width="36" align="left" hspace="12" alt="鲸鱼娘">
 
-主要实现由 [@pridelizihao](https://github.com/pridelizihao) 与 **DeepSeek**（AI 编程助手）结对完成：调度与评分逻辑、前端交互、测试用例、这份 README 和截图都有它参与，具体分工见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。
+主要实现由 [@pridelizihao](https://github.com/pridelizihao) 与 **DeepSeek**（AI 编程助手）结对完成：调度与评分逻辑、前端交互、测试用例、这份 README 和截图都有它参与，具体分工见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。头像是社区拟人形象「鲸鱼娘」，来源与授权说明也写在那份文件里。
 
 <br clear="left">
 

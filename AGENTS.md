@@ -224,6 +224,7 @@ npm run build       # vite build，产物在 frontend/dist（已入库：部署�
 - 公开仓库意味着 README 里的一切都会公开：现在只有生产 IP（`47.117.171.160`）这一处，加内容前想一下能不能公开。
 - `.env`、`db.sqlite3`、`venv/`、`backend/audio-cache/` 都在 `.gitignore` 里，**不要为了省事 `git add -f`**。
 - 贡献署名统一写在 [`CONTRIBUTORS.md`](CONTRIBUTORS.md)：GitHub 的 contributors 面板只统计「邮箱绑定了账号」的提交者，AI 助手进不去，也不要用 `Co-authored-by` 编一个邮箱去凑——那可能撞上真实用户，等于把功劳记错人。改了分工记得同步那份文件。
+- 头像 `docs/assets/deepseek-whale-girl.png` 是社区资产库的**非 MIT 素材**（来源与授权边界见 CONTRIBUTORS.md「头像素材来源」），换掉它不影响任何代码；新增图片前先确认能不能再分发。
 
 ## 9. 已知限制 / 待办
 

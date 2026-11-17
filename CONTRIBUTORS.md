@@ -12,7 +12,7 @@
 
 ## AI 编程助手
 
-<img src="docs/assets/deepseek-whale.svg" width="52" align="left" hspace="14" vspace="2" alt="DeepSeek">
+<img src="docs/assets/deepseek-whale-girl.png" width="64" align="left" hspace="14" vspace="2" alt="鲸鱼娘">
 
 **DeepSeek**
 
@@ -31,4 +31,12 @@
 
 - 新增贡献者按上面的格式加在对应分组里，写清楚**做了什么**，不要只写名字。
 - AI 参与的改动不伪造 GitHub 账号、不编造共同作者邮箱；写进这份文件即可。
-- 头像必须是**自己画的或有权使用的**素材。`docs/assets/deepseek-whale.svg` 是手写的 SVG，没有复制任何官方 Logo 或同人图。
+- 头像素材**必须写明来源与作者**，不能声称自己拥有它。现在的头像裁自社区资产库，见下一节——它不在本项目的 MIT 授权范围内。
+
+## 头像素材来源
+
+`docs/assets/deepseek-whale-girl.png` 是从[鲸鱼娘开源资产库](https://github.com/TreapGoGo/deepseek-whale-girl)的 `characters/dafeiyu/reference-sheets/dafeiyu-chibi-character-sheet.png` 裁出的头部特写：原图 1448×1086，取 400×400 见方的头部区域后缩到 256×256。
+
+- 「鲸鱼娘」是社区围绕 DeepSeek 鲸鱼标志创作的拟人形象，**不是官方设定**；本项目与深度求索公司没有任何关系。
+- 资产库的**代码**是 MIT，但它的 README 写明「角色设定图、社区投稿及外部项目素材不包含在上述代码许可中」，也没有给出这张图的具体授权。所以它**不能**被当成 MIT 素材再分发，这里只作为署名头像使用。
+- 如果原图作者或社区认为不妥，[开一个 issue](https://github.com/pridelizihao/english-vocabulary-web/issues) 就撤下，换成别的图不影响任何代码。
